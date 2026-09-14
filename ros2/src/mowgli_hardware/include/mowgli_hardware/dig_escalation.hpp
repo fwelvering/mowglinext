@@ -177,6 +177,26 @@ inline int DigNearbyLatchCount(
 /// @param radius_m  "same spot" radius; <= 0 disables
 /// @param window_s  look-back window; <= 0 disables
 /// @param min_count latches required to escalate; <= 1 disables
+/// Distance from the escalation point, in multiples of the same-spot radius,
+/// beyond which the latch is released: at 2x the radius the robot is provably
+/// no longer where it was digging — the operator carried it clear, or a HOME
+/// drove it out. Below that it may merely have shuffled inside the same hole.
+/// Reaching the charger still clears it too (the unambiguous proof).
+inline constexpr double kDigEscalationClearFactor = 2.0;
+
+/// True when the fused pose (x, y) has moved far enough from the escalation
+/// anchor to release the latch. A non-positive radius never clears (feature
+/// disabled — the caller never latched either).
+inline bool DigEscalationClearedByDisplacement(
+    double anchor_x, double anchor_y, double x, double y, double radius_m)
+{
+  if (radius_m <= 0.0)
+  {
+    return false;
+  }
+  return std::hypot(x - anchor_x, y - anchor_y) > kDigEscalationClearFactor * radius_m;
+}
+
 inline bool ShouldEscalate(const DigLatchHistory& history,
                            double x,
                            double y,
@@ -200,16 +220,17 @@ inline bool ShouldEscalate(
 }
 
 // ── Operator override (issue reported 2026-09-14) ───────────────────────────
-// Reaching the charger is the ONLY unconditional clear (see dig_escalated_'s
-// doc comment on the bridge) because docking is proof the robot is no longer
-// AT the obstruction — but the dock may be far away, unreachable from the
-// escalated position (mowing is stopped, so nothing drives it there), or the
-// operator may have already freed the chassis by hand and simply want to
-// resume nearby. CanClearDigEscalation() is that second, narrower proof: the
-// current position is no longer within the SAME "same spot" radius that
-// caused the escalation (radius_m — deliberately the identical constant
-// ShouldEscalate clusters latches with, not a separate tunable, since the
-// question is symmetric: "far enough to no longer count as this spot").
+// Reaching the charger is the unconditional clear (see dig_escalated_'s doc
+// comment on the bridge) because docking is proof the robot is no longer AT
+// the obstruction, and DigEscalationClearedByDisplacement() above releases
+// the latch on its own at kDigEscalationClearFactor x radius_m — but the dock
+// may be far away, unreachable from the escalated position (mowing is
+// stopped, so nothing drives it there), or the operator may have freed the
+// chassis by hand and want to resume from just outside the spot, before the
+// automatic release distance. CanClearDigEscalation() is that narrower,
+// operator-confirmed proof: the current position is no longer within
+// radius_m of the escalation anchor (the bridge passes its configurable
+// dig_escalate_clear_distance_m, floored at 0.30 m, as radius_m).
 // Anything closer means the robot could still be sitting against — or have
 // only nudged a few cm from — the object that would have been the 4th latch;
 // clearing there would defeat the guard ShouldEscalate exists to raise.

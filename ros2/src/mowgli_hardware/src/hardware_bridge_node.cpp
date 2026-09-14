@@ -81,6 +81,7 @@
 #include "mowgli_hardware/packet_handler.hpp"
 #include "mowgli_hardware/serial_port.hpp"
 #include "mowgli_hardware/timer_period.hpp"
+#include "mowgli_interfaces/update_maintenance.hpp"
 
 // High-level mode constants — must match HighLevelStatus.msg and the
 // HL_MODE_* defines in firmware/mowgli_protocol.h. Declared locally to
@@ -1534,10 +1535,9 @@ private:
       // threshold without its own odometry subscription.
       msg.dig_escalated = dig_escalated_;
       msg.dig_escalated_distance_m =
-          dig_escalated_
-              ? static_cast<float>(std::hypot(last_map_pose_x_ - dig_escalated_anchor_x_,
-                                              last_map_pose_y_ - dig_escalated_anchor_y_))
-              : 0.0F;
+          dig_escalated_ ? static_cast<float>(std::hypot(last_map_pose_x_ - dig_escalation_x_,
+                                                         last_map_pose_y_ - dig_escalation_y_))
+                         : 0.0F;
       msg.dig_escalated_required_distance_m = static_cast<float>(dig_escalate_clear_distance_m_);
       pub_status_->publish(msg);
     }
@@ -2466,6 +2466,11 @@ private:
 
   void send_blade_command(uint8_t on, uint8_t dir)
   {
+    if (mowgli_interfaces::updateMaintenanceActive())
+    {
+      on = 0;
+      mow_enabled_ = false;
+    }
     LlCmdBlade pkt{};
     pkt.type = PACKET_ID_LL_CMD_BLADE;
     pkt.blade_on = on;
@@ -3083,6 +3088,27 @@ private:
   {
     last_map_pose_x_ = msg->pose.pose.position.x;
     last_map_pose_y_ = msg->pose.pose.position.y;
+    // Release the repeat-dig latch once the robot is provably away from the
+    // spot (2x the same-spot radius): the operator lifted it clear, or HOME
+    // drove it out. Without this the only exit was the charger, so a robot
+    // carried onto open grass still refused Play ("DIG_OBSTRUCTION" forever).
+    if (dig_escalated_ && DigEscalationClearedByDisplacement(dig_escalation_x_,
+                                                             dig_escalation_y_,
+                                                             last_map_pose_x_,
+                                                             last_map_pose_y_,
+                                                             dig_escalate_cfg_.radius_m))
+    {
+      dig_escalated_ = false;
+      dig_latch_history_.clear();
+      publish_dig_escalated();
+      RCLCPP_INFO(get_logger(),
+                  "Dig escalation cleared: robot is %.2f m from the escalation point "
+                  "(%.2f, %.2f) — carried clear or driven out.",
+                  std::hypot(last_map_pose_x_ - dig_escalation_x_,
+                             last_map_pose_y_ - dig_escalation_y_),
+                  dig_escalation_x_,
+                  dig_escalation_y_);
+    }
     // Worst axis of the position block; the detector compares a scalar
     // distance so the larger sigma is the honest one to gate on.
     // MAJOR AXIS of the xy covariance ellipse, not max(var_xx, var_yy).
@@ -3318,8 +3344,8 @@ private:
     }
 
     dig_escalated_ = true;
-    dig_escalated_anchor_x_ = last_map_pose_x_;
-    dig_escalated_anchor_y_ = last_map_pose_y_;
+    dig_escalation_x_ = last_map_pose_x_;
+    dig_escalation_y_ = last_map_pose_y_;
     RCLCPP_ERROR(get_logger(),
                  "Dig escalation: %d latches within %.2f m in %.0f s at map (%.2f, %.2f) — "
                  "the robot cannot free itself here; stopping.",
@@ -3348,10 +3374,10 @@ private:
       res->message = "no dig escalation is currently active";
       return;
     }
-    const double dist = std::hypot(last_map_pose_x_ - dig_escalated_anchor_x_,
-                                   last_map_pose_y_ - dig_escalated_anchor_y_);
-    if (!CanClearDigEscalation(dig_escalated_anchor_x_,
-                               dig_escalated_anchor_y_,
+    const double dist =
+        std::hypot(last_map_pose_x_ - dig_escalation_x_, last_map_pose_y_ - dig_escalation_y_);
+    if (!CanClearDigEscalation(dig_escalation_x_,
+                               dig_escalation_y_,
                                last_map_pose_x_,
                                last_map_pose_y_,
                                dig_escalate_clear_distance_m_))
@@ -3363,8 +3389,8 @@ private:
                     "still only %.2f m from the obstruction at (%.2f, %.2f) — move the mower "
                     "more than %.2f m away before clearing",
                     dist,
-                    dig_escalated_anchor_x_,
-                    dig_escalated_anchor_y_,
+                    dig_escalation_x_,
+                    dig_escalation_y_,
                     dig_escalate_clear_distance_m_);
       res->message = buf;
       return;
@@ -3376,8 +3402,8 @@ private:
                 "Dig escalation cleared by operator override: moved %.2f m from the obstruction "
                 "at (%.2f, %.2f).",
                 dist,
-                dig_escalated_anchor_x_,
-                dig_escalated_anchor_y_);
+                dig_escalation_x_,
+                dig_escalation_y_);
     res->success = true;
     char buf[128];
     std::snprintf(buf,
@@ -3412,6 +3438,11 @@ private:
   /// Single point where a velocity command reaches the firmware.
   void send_cmd_vel_packet(double vx, double wz)
   {
+    if (mowgli_interfaces::updateMaintenanceActive())
+    {
+      vx = 0.0;
+      wz = 0.0;
+    }
     // Keep this final construction boundary defensive as well: callers such
     // as the bounded dig escape pass doubles.  Check float32 representability
     // before narrowing: converting an out-of-range double is not a safe way
@@ -3554,20 +3585,25 @@ private:
   double dig_escalate_clear_distance_m_{0.50};
   DigLatchHistory dig_latch_history_;
   /// Latched once the robot proves it cannot free itself at one spot. Cleared
-  /// unconditionally when the robot reaches the charger (mating with the dock
-  /// is unambiguous proof it physically left the obstruction, whether the
-  /// operator carried it out or it drove home), and conditionally via
-  /// ~/clear_dig_escalation once the chassis has moved past dig_escalate_cfg_
-  /// .radius_m from dig_escalated_anchor_{x,y}_ (see on_clear_dig_escalation
-  /// — an operator-confirmed "I freed it and it isn't at the dock" path for
-  /// when the dock is unreachable from here or the operator already knows the
-  /// obstruction is clear). Nothing else clears it, so a robot still sitting
-  /// against the object cannot quietly resume.
+  /// (1) unconditionally when the robot reaches the charger (mating with the
+  /// dock is unambiguous proof it physically left the obstruction, whether the
+  /// operator carried it out or it drove home); (2) automatically once the
+  /// fused pose has moved kDigEscalationClearFactor x dig_escalate_radius_m
+  /// away from dig_escalation_{x,y}_ (carried clear by the operator, or driven
+  /// out on a HOME — checked in on_filtered_map_odom); (3) on operator request
+  /// via ~/clear_dig_escalation once the chassis has moved past
+  /// dig_escalate_clear_distance_m_ from the same anchor (see
+  /// on_clear_dig_escalation — an operator-confirmed "I freed it and it isn't
+  /// at the dock" path for the band between the clear distance and the
+  /// automatic 2x-radius release). A robot still sitting against the object
+  /// matches none of the three, so it cannot quietly resume: Play stays
+  /// refused by the tree's DigObstructionGuard until one of them happens.
   bool dig_escalated_{false};
   /// Map-frame position last_map_pose_{x,y}_ held when dig_escalated_ was set
-  /// — the "same spot" ~/clear_dig_escalation measures distance from.
-  double dig_escalated_anchor_x_{0.0};
-  double dig_escalated_anchor_y_{0.0};
+  /// — the "same spot" both the displacement clear and ~/clear_dig_escalation
+  /// measure distance from.
+  double dig_escalation_x_{0.0};
+  double dig_escalation_y_{0.0};
 
   /// Latest differential-drive command, captured in on_cmd_vel, with the time
   /// it arrived. Both components are required: a pure pivot has vx == 0 while

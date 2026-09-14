@@ -16,10 +16,11 @@ interface DigEscalationBannerProps {
  * Dashboard warning shown while hardware_bridge has latched a repeat-dig
  * escalation (mowgli_hardware/dig_escalation.hpp) — three-or-more digs in
  * the same spot, the robot judged unable to free itself, mowing halted. The
- * latch clears itself once the robot reaches the charger; this banner is the
- * OTHER path (issue reported 2026-09-14): an operator who has already moved
- * the mower away from the obstruction by hand can clear it here instead of
- * driving the whole way home. The Clear button stays disabled until the
+ * latch clears itself once the robot reaches the charger or once the fused
+ * pose is 2x dig_escalate_radius_m from the spot; this banner is the operator
+ * path in between (issue reported 2026-09-14): an operator who has already
+ * moved the mower away from the obstruction by hand can clear it here
+ * instead of driving the whole way home or carrying it a full metre. The Clear button stays disabled until the
  * chassis has actually moved dig_escalated_required_distance_m past the
  * spot the escalation latched at — ~/clear_dig_escalation enforces the same
  * distance server-side, so a stale/racy click still fails safely with the
