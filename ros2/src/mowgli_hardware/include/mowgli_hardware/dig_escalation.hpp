@@ -199,4 +199,28 @@ inline bool ShouldEscalate(
   return ShouldEscalate(history, x, y, t, cfg.radius_m, cfg.window_s, cfg.min_count);
 }
 
+// ── Operator override (issue reported 2026-09-14) ───────────────────────────
+// Reaching the charger is the ONLY unconditional clear (see dig_escalated_'s
+// doc comment on the bridge) because docking is proof the robot is no longer
+// AT the obstruction — but the dock may be far away, unreachable from the
+// escalated position (mowing is stopped, so nothing drives it there), or the
+// operator may have already freed the chassis by hand and simply want to
+// resume nearby. CanClearDigEscalation() is that second, narrower proof: the
+// current position is no longer within the SAME "same spot" radius that
+// caused the escalation (radius_m — deliberately the identical constant
+// ShouldEscalate clusters latches with, not a separate tunable, since the
+// question is symmetric: "far enough to no longer count as this spot").
+// Anything closer means the robot could still be sitting against — or have
+// only nudged a few cm from — the object that would have been the 4th latch;
+// clearing there would defeat the guard ShouldEscalate exists to raise.
+inline bool CanClearDigEscalation(
+    double anchor_x, double anchor_y, double x, double y, double radius_m)
+{
+  if (radius_m <= 0.0)
+  {
+    return true;  // escalation itself is disabled at this threshold; never block a clear
+  }
+  return std::hypot(x - anchor_x, y - anchor_y) > radius_m;
+}
+
 }  // namespace mowgli_hardware
