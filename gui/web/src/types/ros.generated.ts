@@ -176,6 +176,7 @@ export const enum DockCalibrationStatusConstants {
   PHASE_PERSIST = 5,
   PHASE_IDLE = 6,
   PHASE_DONE = 7,
+  PHASE_CAPTURE_POSITION = 8,
 };
 
 export type DockCalibrationStatus = {
@@ -389,6 +390,8 @@ export type MapArea = {
   obstacles?: Polygon[];
   is_navigation_area?: boolean;
   obstacle_info?: MapObstacleInfo[];
+  proposed_obstacles?: Polygon[];
+  proposed_obstacle_info?: MapObstacleInfo[];
   id?: number;
 };
 

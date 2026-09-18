@@ -48,6 +48,7 @@ unless noted otherwise. QoS 1 throughout.
 | `<prefix>/position` | out | no | `/wheel_odom` (**odom frame**, not GPS) | `publish_rate` Hz |
 | `<prefix>/gps` | out | no | `/gps/fix` (raw `NavSatFix`) | `publish_rate` Hz |
 | `<prefix>/rtk_status` | out | yes | `/gps/status` (`GnssStatus`) | on change |
+| `<prefix>/area_boundary` | out | yes | `/map_server_node/get_mowing_area` (polled) | on change, polled every 10 s |
 | `<prefix>/diagnostics` | out | no | `/diagnostics` | on change |
 | `<prefix>/available` | out | yes | connection state (LWT) | on connect/disconnect |
 | `<prefix>/areas` | out | yes | `/map_server_node/get_mowing_area` (polled) | ~every 10s |
@@ -84,6 +85,15 @@ underlying ROS field, which (despite its name) is actually a 0.0–1.0 fraction 
 `std::clamp(..., 0.0f, 1.0f)` — straight into `HighLevelStatus.gps_quality_percent` with no ×100).
 If you're reading this field via any *other* path than `<prefix>/high_level_status` (e.g. straight
 off the `/behavior_tree_node/high_level_status` ROS topic), remember it's 0.0–1.0 there, not 0–100.
+
+**Field-observed staleness (mowglinext#644):** the bridge's subscription to the underlying ROS topic
+has been seen to go stale for extended periods (30+ minutes) on a real deployment, continuing to
+report old data on `<prefix>/high_level_status` while the ROS topic itself stayed fresh and this
+node otherwise stayed connected. `mqtt_bridge_node` now watches for this — behavior_tree_node
+republishes the ROS topic unconditionally at least once a second, so several seconds of silence on
+that subscription makes the bridge recreate it automatically, with no restart needed. If you're
+seeing this topic disagree with the mower's actual state for more than a few seconds, check the
+bridge's own log for a "recreating the subscription" warning before assuming a code bug elsewhere.
 
 `state` values (`mowgli_interfaces/msg/HighLevelStatus.msg`):
 
@@ -179,6 +189,43 @@ directly, whose own population is backend-dependent and not guaranteed to be on 
 | `fix_type` / `fix_type_name` | 0 `NO_FIX`, 1 `GPS_FIX`, 2 `RTK_FLOAT`, 3 `RTK_FIXED`, 4 `DEAD_RECKONING` |
 | `rtk_mode` / `rtk_mode_name` | 0 `UNKNOWN`, 1 `NONE`, 2 `FLOAT`, 3 `FIXED` |
 | `fix_valid` | Overrides everything else — a stale/leftover `fix_type` with `fix_valid: false` means no usable fix, full stop |
+
+### `<prefix>/area_boundary`
+
+```json
+{
+  "datum_lat": 52.12345678,
+  "datum_lon": 4.56789012,
+  "areas": [
+    {
+      "index": 0,
+      "name": "Front Lawn",
+      "boundary": [[1.234, -0.567], [10.0, -0.567], [10.0, 8.0], [1.234, 8.0]],
+      "obstacles": [[[3.0, 2.0], [4.0, 2.0], [4.0, 3.0], [3.0, 3.0]]]
+    }
+  ]
+}
+```
+
+Polygon geometry for every recorded mowing area, so an external tool (e.g. a Home Assistant map
+card) can render the boundary and obstacles the robot's own GUI shows. `datum_lat`/`datum_lon` are
+the map-frame origin (`mowgli_robot.yaml`'s datum — the same one `map_server_node` and the
+localizer use, see root `CLAUDE.md` Invariant 4): every `[x, y]` pair is a **map-frame offset in
+metres** from that datum (east/north, equirectangular projection — the same math as
+`wgs84_projection.hpp`), not a lat/lon pair itself. To place a point on a real map, project it back
+through the datum with the same equirectangular formula. `boundary` is the area's outer polygon
+(`MapArea.area`); `obstacles` is a list of polygons (`MapArea.obstacles`), one entry per obstacle,
+empty when the area has none. Navigation-only areas (`MapArea.is_navigation_area`) are excluded —
+they aren't mowed, so there's nothing useful to draw.
+
+This topic is polled independently of the `<prefix>/areas` name-list topic above (each runs its own
+`GetMowingArea` poll loop, on the same 10s cadence but not synchronised) — it exists purely to
+describe geometry for drawing, not to identify areas for a `<prefix>/start_area` command. Indices
+are **not guaranteed stable or contiguous** across a session (mowglinext#637) — match on `name`,
+not `index`, if you need to correlate with `<prefix>/areas`. The bridge polls
+`/map_server_node/get_mowing_area` every 10 seconds (index 0, 1, 2, … until the service reports
+`success: false`, capped at 100 areas) and only republishes (retained) when the serialised geometry
+actually changed, so a static map does not spam the broker.
 
 ### `<prefix>/diagnostics`
 

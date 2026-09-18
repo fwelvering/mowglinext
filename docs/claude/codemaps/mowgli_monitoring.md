@@ -1,11 +1,12 @@
 # Codemap: mowgli_monitoring
 
 > Health aggregation for the robot: `diagnostics_node` folds hardware-bridge, emergency, battery, IMU,
-> LiDAR, GPS, wheel-odom, fused-pose and motor telemetry into one `/diagnostics` `DiagnosticArray`
-> (1 Hz), and the optional `mqtt_bridge_node` mirrors status/power/emergency/high_level_status/gps/
-> diagnostics/availability/areas to an MQTT broker as JSON — the documented external integration
-> surface (see [`docs/MQTT_CONTROL.md`](../../MQTT_CONTROL.md)), e.g. for Home Assistant. Nothing
-> here owns TF, blades, or motion; it is read-only except for the MQTT → `HighLevelControl` and
+> LiDAR, GPS, wheel-odom, fused-pose, motor telemetry and Nav2 path-tracking error into one
+> `/diagnostics` `DiagnosticArray` (1 Hz), and the optional `mqtt_bridge_node` mirrors
+> status/power/emergency/high_level_status/gps/diagnostics/availability/areas to an MQTT broker as
+> JSON — the documented external integration surface (see
+> [`docs/MQTT_CONTROL.md`](../../MQTT_CONTROL.md)), e.g. for Home Assistant. Nothing here owns TF,
+> blades, or motion; it is read-only except for the MQTT → `HighLevelControl` and
 > MQTT → `StartInArea` command paths. The area list (`<prefix>/areas`) is an **interim,
 > index-based** contract pending a stable per-area id (mowglinext#637) — see the "INTERIM
 > CONTRACT" note in `mqtt_bridge_node.hpp`.
@@ -16,6 +17,7 @@
 ## Where to look
 | Task | Start here |
 |------|------------|
+| Path-tracking error ("Path Tracking" status: lateral/heading error while a FollowPath goal runs) | `check_path_tracking()` in `ros2/src/mowgli_monitoring/src/diagnostics_node.cpp`; the reduction itself is `mowgli_interfaces/path_tracking_stats.hpp` (shared with the BT's `FollowStrip`), fed from `/tracking_feedback` (`nav2_msgs/TrackingFeedback`, ROS 2 Lyrical — ROOT namespace: Nav2 creates that publisher with a relative name, so it is NOT under `/controller_server/`). Thresholds in `config/diagnostics.yaml` (`path_tracking_warn_m` / `path_tracking_error_m` / `path_tracking_idle_sec`). Silence = OK "Idle": a docked robot has no goal. See [`NAV2_LYRICAL_CONTROLLER_REVIEW.md`](../../NAV2_LYRICAL_CONTROLLER_REVIEW.md) |
 | Add / change a health check (one `DiagnosticStatus`) | `ros2/src/mowgli_monitoring/src/diagnostics_node.cpp` — the `check_*()` block (:327–667); add the call in `publish_diagnostics()` (:303–321); declare it in `ros2/src/mowgli_monitoring/include/mowgli_monitoring/diagnostics_node.hpp:166–174`; extend `expected_names` in `ros2/src/mowgli_monitoring/test/test_diagnostics.cpp:227–236` |
 | Change WARN/ERROR thresholds (freshness, battery %, motor °C) | `ros2/src/mowgli_monitoring/config/diagnostics.yaml` (defaults) ↔ `declare_parameters()` `diagnostics_node.cpp:127–146` (code defaults must match) |
 | Subscribe to a new input topic | `create_subscriptions()` `diagnostics_node.cpp:148–218`; add the snapshot fields to `DiagnosticsState` `diagnostics_node.hpp:66–103` |
@@ -79,9 +81,13 @@
 | `/odometry/filtered_map` | `nav_msgs/msg/Odometry` | sub (diag) :202 | `SensorDataQoS` | `fusion_graph_node` (`ros2/src/fusion_graph/src/fusion_graph_node_setup_comms.cpp:35`) |
 | `/gps/fix` | `sensor_msgs/msg/NavSatFix` | sub (diag) :211; also sub (mqtt_bridge) `SensorDataQoS` | `SensorDataQoS` | GNSS sidecar (not in `ros2/src`); sim relay `sim_full_system.launch.py:321–322` |
 | `/behavior_tree_node/high_level_status` | `mowgli_interfaces/msg/HighLevelStatus` | sub (mqtt_bridge), QoS 10 | reliable, depth 10 | `behavior_tree_node.cpp:815–841` (republished ~1 Hz) |
+| `/gps/status` | `mowgli_interfaces/msg/GnssStatus` | sub (mqtt_bridge) :569 | reliable, depth 10 | `mowgli_localization` GNSS status node — also read by the LED ring and GUI GPS % card |
+| `/map_server_node/get_mowing_area` | `mowgli_interfaces/srv/GetMowingArea` | client (mqtt_bridge) :589, polled by `maybe_poll_area_boundaries()` :769 | service | `map_server_node` — same service the BT's `PlanCoverageArea` calls |
 | MQTT `<prefix>/status`, `/power`, `/emergency`, `/high_level_status` | JSON (retain=true) | out `mqtt_bridge_node.cpp` `on_status`/`on_power`/`on_emergency`/`on_high_level_status` | QoS 1 | any broker client — see [`docs/MQTT_CONTROL.md`](../../MQTT_CONTROL.md) for schemas |
 | MQTT `<prefix>/position` | JSON `{x,y,theta}` from `/wheel_odom` (odom frame, NOT georeferenced), rate-limited to `publish_rate` | out | QoS 1, retain=false | — |
 | MQTT `<prefix>/gps` | JSON `{latitude,longitude,altitude,status,service}` from `/gps/fix`, rate-limited to `publish_rate` | out | QoS 1, retain=false | for a map/`device_tracker`-style consumer — `<prefix>/position` cannot serve that role |
+| MQTT `<prefix>/rtk_status` | JSON `{fix_type,fix_type_name,rtk_mode,rtk_mode_name,fix_valid,quality_percent}` from `/gps/status` | out (retain=true) | QoS 1 | `quality_percent` is `gnss_status_utils::HardwareQualityPercent()`, not the raw msg field |
+| MQTT `<prefix>/area_boundary` | JSON `{datum_lat,datum_lon,areas:[{index,name,boundary,obstacles}]}`, map-frame `[x,y]` metre offsets | out (retain=true), polled every 10 s via `on_timer()` | QoS 1 | `serialise_area_boundaries()`; only republished when the geometry changes — see [`docs/MQTT_CONTROL.md`](../../MQTT_CONTROL.md) |
 | MQTT `<prefix>/diagnostics` | JSON `[{name,level,message},…]` | out | QoS 1, retain=false | — |
 | MQTT `<prefix>/available` | plain text `"online"`/`"offline"` (LWT) | out — set pre-connect via `mosquitto_will_set`, republished on every (re)connect | QoS 1, retain=true | lets a consumer tell "offline" apart from "online but stuck" |
 | MQTT `<prefix>/command` | decimal **ASCII string** uint8 payload (e.g. `"1"`, not a raw byte) | in → `parse_command_payload()` → `on_mqtt_command()` | QoS 1 | any broker client |
@@ -181,6 +187,7 @@ CI: `.github/workflows/ros2-ci.yml` — "Build workspace" (:335–341, whole-wor
 - `snprintf` payload buffers are fixed (`:618, :663, :685, :708, :726`); a long `Emergency.reason` or status message is truncated, not escaped into invalid JSON, but adding fields to `serialise_status` can overflow the 512 B budget silently. `serialise_areas()` deliberately does NOT use this pattern — area names are unbounded operator text, so it builds the JSON with `std::string` concatenation instead.
 - `<prefix>/areas`' `index` field is `map_server_node`'s raw, positional `areas_` vector index (same space `GetMowingArea`/`StartInArea` use) — there is no stable per-area id yet ([mowglinext#637](https://github.com/mowglinext/mowglinext/issues/637)). The GUI's own area editor rebuilds the whole list on any single-area add/edit/delete (`gui/pkg/api/mowglinext.go` `replaceMapInternal`), which can reassign every index — a client that caches an index across a session can end up targeting the wrong area with `<prefix>/start_area`. This is a known, deliberate limitation of the current contract, not an oversight — see the "INTERIM CONTRACT" note in `mqtt_bridge_node.hpp`.
 - `poll_areas_step()` recurses via chained `async_send_request` callbacks (not native call-stack recursion — each step's lambda returns immediately after scheduling the next request), capped at `kMaxAreasPoll` (100, matching the GUI backend's own `pollMap()` cap) so a corrupted/huge `areas_` vector can't poll forever.
+- `<prefix>/high_level_status` subscription watchdog ([mowglinext#644](https://github.com/mowglinext/mowglinext/issues/644)): field-observed staleness (30+ min) with the ROS topic itself fresh and this node otherwise alive/connected. `on_timer()` calls `is_high_level_status_stale()` (pure, unit-tested) and recreates just `sub_high_level_status_` via `create_high_level_status_subscription()` after `kHighLevelStatusStaleAfterS` (5 s) of silence — behavior_tree_node republishes unconditionally at least once a second, so silence beyond that is the subscription, not the publisher. Root cause unconfirmed (leading theory: a stuck long-lived DDS reader, root `ros2/CLAUDE.md`'s Cyclone-DDS-on-ARM caveat) — this is a recovery mechanism, not a fix for whatever causes it.
 - `test_diagnostics.cpp:207–244` enumerates only 8 categories; `check_fusion` ("EKF Map") is untested and can be renamed without a test failing.
 - The two `/**:` YAMLs are loaded from the **package share** path (`full_system.launch.py:176–177`); there is no `/ros2_ws/config/diagnostics.yaml` or `mqtt_bridge.yaml` override lookup (the only runtime-config read in the launch files is `mowgli_robot.yaml`).
 - "BT visualization" lives elsewhere: `/behavior_tree_log` is Nav2's `nav2_msgs/msg/BehaviorTreeLog` consumed by the GUI (`gui/pkg/providers/ros.go:43`, `gui/web/src/hooks/useBTLog.ts`); no node in `ros2/src` publishes it and `mowgli_interfaces` has no such msg. Foxglove publishing is `foxglove_bridge` in `full_system.launch.py:557–583` / `ros2/src/mowgli_bringup/config/foxglove_bridge.yaml`; the ad-hoc `ros2/src/precision_monitor.py` script publishes `/precision/*` Float64s for Foxglove plots. Localizer-specific health is `/fusion_graph/diagnostics` from `fusion_graph_node` (root `CLAUDE.md` Invariant 1), not this package.
