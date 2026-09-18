@@ -499,6 +499,28 @@ void MapServerNode::on_add_area(const mowgli_interfaces::srv::AddMowingArea::Req
   // genuinely new area (id absent, i.e. 0 — the MapArea.msg default for a
   // request that never set it) gets a freshly minted one instead.
   entry.id = (req->area.id != 0) ? req->area.id : next_area_id_++;
+  // A round-tripped id must still be UNIQUE. The rebuild flow above replays one
+  // add_area per area, so a client whose cached list contains the same id twice
+  // — or that replays a stale list against areas this session already minted —
+  // would otherwise create two entries sharing an identity that the resume
+  // cursor, the mow-progress bookkeeping and the GUI all key on. Mint a fresh
+  // id instead of trusting the caller, and say so: silently renaming an area's
+  // identity is exactly the kind of thing that is impossible to debug later.
+  if (req->area.id != 0 && std::any_of(areas_.begin(),
+                                       areas_.end(),
+                                       [&entry](const AreaEntry& existing)
+                                       {
+                                         return existing.id == entry.id;
+                                       }))
+  {
+    RCLCPP_WARN(get_logger(),
+                "AddArea('%s'): id %u is already taken by another area — minting %u instead. "
+                "The caller replayed a duplicate or stale id.",
+                entry.name.c_str(),
+                entry.id,
+                next_area_id_);
+    entry.id = next_area_id_++;
+  }
   if (entry.id >= next_area_id_)
   {
     // A round-tripped id can be >= our current counter (e.g. this session

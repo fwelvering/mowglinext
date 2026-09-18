@@ -431,6 +431,22 @@ TEST_F(AreaTypeTest, ReAddingAnAreaWithAnExplicitIdPreservesIt)
       << "a caller-supplied id must be honored, not silently overwritten by a fresh mint";
 }
 
+TEST_F(AreaTypeTest, ADuplicateRoundTrippedIdIsRejectedAndMintedAfresh)
+{
+  // The GUI's edit/delete flow replays one add_area per area, so a client
+  // holding a duplicated or stale list can offer the same id twice. Two areas
+  // sharing an identity would silently corrupt everything keyed on it — the
+  // resume cursor, the mow-progress bookkeeping, the GUI's selection.
+  constexpr uint32_t kId = 77;
+  ASSERT_TRUE(add_area("first", make_rect(-3, -3, 0, 0), /*is_navigation=*/false, kId));
+  ASSERT_TRUE(add_area("second", make_rect(0, 0, 3, 3), /*is_navigation=*/false, kId));
+
+  EXPECT_EQ(get_area(0)->area.id, kId) << "the first claim on an id keeps it";
+  const uint32_t second_id = get_area(1)->area.id;
+  EXPECT_NE(second_id, kId) << "two areas must never share an id";
+  EXPECT_NE(second_id, 0u) << "the duplicate must get a real id, not none at all";
+}
+
 TEST_F(AreaTypeTest, PreservingAHighIdAdvancesTheCounterPastIt)
 {
   // Round-trip an id far above whatever this fresh node's counter starts
