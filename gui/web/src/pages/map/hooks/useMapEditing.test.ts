@@ -126,9 +126,14 @@ describe('performSplit re-parents obstacles by where they actually end up', () =
             drawRef: {current: draw},
             notification: {error: vi.fn(), info: vi.fn(), success: vi.fn()},
             mapInstanceRef: {current: null},
-            selectedFeatureIds: [parent.id],
         } as unknown as UseMapEditingOptions;
         const hook = renderHook(() => useMapEditing(options));
+        // selectedFeatureIds is internal hook state, not an options prop --
+        // handleSplit reads it via useState, so it must be set through the
+        // hook's own setter before handleSplit() will accept the target.
+        act(() => {
+            hook.result.current.setSelectedFeatureIds([parent.id]);
+        });
         return {hook, parent, obstacle, draw, setFeatures: options.setFeatures as ReturnType<typeof vi.fn>};
     }
 
