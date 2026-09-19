@@ -311,11 +311,14 @@ private:
     // callback of this node, subscriptions included, shares the default
     // MutuallyExclusive callback group and is therefore already serialized
     // against the tick thread.
-    area_list_generation_sub_ = create_subscription<std_msgs::msg::UInt64>(
-        "/map_server_node/area_list_generation",
-        rclcpp::QoS(1).transient_local(),
-        [this](std_msgs::msg::UInt64::ConstSharedPtr msg)
-        { context_->current_area_list_generation = msg->data; });
+    area_list_generation_sub_ =
+        create_subscription<std_msgs::msg::UInt64>("/map_server_node/area_list_generation",
+                                                   rclcpp::QoS(1).transient_local(),
+                                                   [this](std_msgs::msg::UInt64::ConstSharedPtr msg)
+                                                   {
+                                                     context_->current_area_list_generation =
+                                                         msg->data;
+                                                   });
 
     // Repeat-dig escalation feed for DigObstructionGuard. The bridge latches
     // this after dig_escalate_count dig latches inside dig_escalate_radius_m
