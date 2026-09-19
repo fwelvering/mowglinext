@@ -80,8 +80,8 @@ constexpr double kMinPlausibleMowedFraction = 0.5;
 /// mowgli_map's own copy (progress_tracker.cpp) so this package's geometry
 /// stays dependency-free and unit-testable without linking mowgli_map.
 inline bool PointInPolygon(double x,
-                            double y,
-                            const std::vector<std::pair<double, double>>& polygon) noexcept
+                           double y,
+                           const std::vector<std::pair<double, double>>& polygon) noexcept
 {
   const std::size_t n = polygon.size();
   if (n < 3)
@@ -112,10 +112,9 @@ inline bool PointInPolygon(double x,
 /// safe "not plausible" default) for a degenerate outer polygon
 /// (< 3 vertices), a grid with no data / non-positive geometry, or an
 /// interior with zero sampled cells — never divides by zero.
-inline double ComputeMowedFraction(
-    const MowProgressGridView& grid,
-    const std::vector<std::pair<double, double>>& outer,
-    const std::vector<std::vector<std::pair<double, double>>>& holes)
+inline double ComputeMowedFraction(const MowProgressGridView& grid,
+                                   const std::vector<std::pair<double, double>>& outer,
+                                   const std::vector<std::vector<std::pair<double, double>>>& holes)
 {
   if (outer.size() < 3 || grid.data == nullptr || grid.width <= 0 || grid.height <= 0 ||
       grid.resolution <= 0.0)
@@ -136,9 +135,13 @@ inline double ComputeMowedFraction(
   }
 
   const auto to_col = [&](double x)
-  { return static_cast<int32_t>(std::floor((x - grid.origin_x) / grid.resolution)); };
+  {
+    return static_cast<int32_t>(std::floor((x - grid.origin_x) / grid.resolution));
+  };
   const auto to_row = [&](double y)
-  { return static_cast<int32_t>(std::floor((y - grid.origin_y) / grid.resolution)); };
+  {
+    return static_cast<int32_t>(std::floor((y - grid.origin_y) / grid.resolution));
+  };
 
   const int32_t col_lo = std::max<int32_t>(0, to_col(min_x));
   const int32_t col_hi = std::min<int32_t>(grid.width - 1, to_col(max_x));

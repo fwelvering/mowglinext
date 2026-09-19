@@ -50,7 +50,7 @@ struct SyntheticGrid
     view.width = 100;
     view.height = 100;
     data.assign(static_cast<std::size_t>(view.width) * static_cast<std::size_t>(view.height),
-               value);
+                value);
     view.data = &data;
   }
 };
@@ -85,8 +85,8 @@ TEST(ComputeMowedFractionTest, HeadlandOnlyBandFallsBelowThePlausibilityFloor)
   {
     for (int32_t col = 0; col < grid.view.width; ++col)
     {
-      const bool near_edge = row < 3 || row >= grid.view.height - 3 || col < 3 ||
-                             col >= grid.view.width - 3;
+      const bool near_edge =
+          row < 3 || row >= grid.view.height - 3 || col < 3 || col >= grid.view.width - 3;
       if (near_edge)
       {
         grid.data[static_cast<std::size_t>(row) * static_cast<std::size_t>(grid.view.width) +
@@ -121,8 +121,10 @@ TEST(ComputeMowedFractionTest, ObstacleHolesAreExcludedFromTheDenominator)
   SyntheticGrid grid(0);
   const auto outer = Square(10.0);
   // A 2x2 m hole in the middle, never stamped.
-  const std::vector<std::pair<double, double>> hole = {
-      {4.0, 4.0}, {6.0, 4.0}, {6.0, 6.0}, {4.0, 6.0}};
+  const std::vector<std::pair<double, double>> hole = {{4.0, 4.0},
+                                                       {6.0, 4.0},
+                                                       {6.0, 6.0},
+                                                       {4.0, 6.0}};
 
   // Stamp everything inside the outer boundary except the hole.
   for (int32_t row = 0; row < grid.view.height; ++row)
