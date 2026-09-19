@@ -555,10 +555,13 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
   // Resize map to fit loaded areas (if any).
   resize_map_to_areas();
 
-  // Publish a baseline area-list generation now that areas_ reflects the
-  // initial load, so a subscriber started before the first edit still gets
-  // a value (transient_local also covers one started after).
-  bump_area_list_generation();
+  // No baseline area_list_generation_ publish here: it is not persisted and
+  // always starts at 0 on a fresh boot, which is exactly what
+  // BTContext::current_area_list_generation already defaults to — a
+  // subscriber that connects before the first edit needs no message to
+  // agree with map_server on that. transient_local covers the case that
+  // actually matters: a subscriber connecting AFTER at least one edit has
+  // already bumped it (bump_area_list_generation(), called from on_add_area).
 
   // Publish docking pose if available (transient_local ensures late subscribers get it).
   if (docking_pose_set_)

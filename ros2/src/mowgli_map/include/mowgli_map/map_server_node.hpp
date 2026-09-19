@@ -465,8 +465,10 @@ private:
 
   /// Increment area_list_generation_ and publish it on
   /// area_list_generation_pub_ (mowglinext#637 phase 2). Called once per
-  /// successful ~/add_area, and once at startup after the initial load so a
-  /// subscriber has a baseline value even before the first edit.
+  /// successful ~/add_area. Not called at startup: area_list_generation_
+  /// always starts at 0 (not persisted), matching the default a fresh
+  /// subscriber already assumes, so there is nothing to announce before the
+  /// first edit.
   void bump_area_list_generation();
 
   void on_get_mowing_area(const mowgli_interfaces::srv::GetMowingArea::Request::SharedPtr req,
