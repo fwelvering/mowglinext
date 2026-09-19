@@ -2156,6 +2156,11 @@ BT::NodeStatus GetNextUnmowedArea::onStart()
     if (target >= 0)
     {
       ctx->single_area_target = static_cast<uint32_t>(target);
+      // A fresh request always re-locks the id from scratch on the next probe
+      // (mowglinext#637) — otherwise a NEW target at the same index a PRIOR
+      // target used to occupy would spuriously compare against the OLD
+      // target's id and immediately "end the run" as if the area had moved.
+      ctx->single_area_target_id.reset();
       // Explicit single-area re-mow: clear any stale completed/attempted flag
       // for THIS target so the skip loop below cannot advance past it. Without
       // this, re-selecting an area already mown this session (sets are only
@@ -2392,6 +2397,51 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   // synchronous fast-skip path may trust this index's completed/attempted
   // flag only as long as the generation does not move again.
   ctx->area_verified_generation[current_area_idx_] = ctx->current_area_list_generation;
+
+  // mowglinext#637: single_area_target (~/start_in_area's "mow only THIS
+  // area" clip) is stored as an INDEX, which the id-reconciliation above
+  // does not protect — it only stops a DIFFERENT index from inheriting this
+  // index's stale progress. It does nothing to stop this dispatch from
+  // mowing whatever area NOW sits at the targeted index after a live
+  // edit/reorder, which is not a "stale progress" problem but a "mowing an
+  // area the operator never selected" problem. Field-confirmed 2026-09-19:
+  // targeting area 0 (id 6), reordering it to id 7's old slot, Resume
+  // silently started mowing id 7 instead — the reconciliation above
+  // correctly discarded id 6's stale per-index state and then this
+  // dispatch, with nothing to check the id against, just proceeded.
+  //
+  // Lock the target's id in on the FIRST probe after it was set (consumed
+  // from target_area_index, above), then verify every later probe of this
+  // same index still matches it. A mismatch means the targeted area moved
+  // (or was deleted) since it was selected — end the run rather than
+  // silently substitute whatever is here now; the operator can re-select
+  // the area to continue. Deliberately NOT a scan-and-relocate: failing
+  // safe and asking the operator to re-confirm is a small UX cost next to
+  // the risk of mowing blades running in the wrong zone.
+  if (ctx->single_area_target.has_value() && current_area_idx_ == *ctx->single_area_target)
+  {
+    if (!ctx->single_area_target_id.has_value())
+    {
+      ctx->single_area_target_id = response->area.id;
+    }
+    else if (*ctx->single_area_target_id != response->area.id)
+    {
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "GetNextUnmowedArea: targeted area (id %u) is no longer at index %u "
+                  "(now id %u) — the area list changed since it was selected. Ending this "
+                  "targeted run instead of mowing the wrong area; re-select it from the "
+                  "map to continue.",
+                  *ctx->single_area_target_id,
+                  current_area_idx_,
+                  response->area.id);
+      ctx->single_area_target.reset();
+      ctx->single_area_target_id.reset();
+      // Deliberately NOT coverage_all_complete=true: this is a genuine
+      // failure to carry out the request, not "nothing left to mow" — it
+      // must route to the failure/dock path, not be read as a clean finish.
+      return BT::NodeStatus::FAILURE;
+    }
+  }
 
   // Navigation-only areas are transit corridors, NOT mowing targets — they
   // carry is_navigation_area=true and must never be selected for coverage (the
