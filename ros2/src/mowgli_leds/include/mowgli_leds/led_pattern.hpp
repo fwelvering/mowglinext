@@ -519,12 +519,14 @@ inline std::vector<Rgb> RenderFrame(const LedInputs& in, const LedPatternCfg& cf
       const std::size_t half = pixels.size() / 2u;
       if (BlinkOn(in.now_s, 1.0))
       {
-        std::fill(pixels.begin(), pixels.begin() + static_cast<std::ptrdiff_t>(half),
+        std::fill(pixels.begin(),
+                  pixels.begin() + static_cast<std::ptrdiff_t>(half),
                   colors::kLightOrange);
       }
       else
       {
-        std::fill(pixels.begin() + static_cast<std::ptrdiff_t>(half), pixels.end(),
+        std::fill(pixels.begin() + static_cast<std::ptrdiff_t>(half),
+                  pixels.end(),
                   colors::kLightOrange);
       }
       break;
