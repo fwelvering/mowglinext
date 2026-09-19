@@ -2084,6 +2084,25 @@ void DetourAroundObstacle::onHalted()
 // GetNextUnmowedArea — iterate areas, find first with strips remaining
 // ===========================================================================
 
+namespace
+{
+/// mowglinext#637 phase 2: may onStart()/advanceAndProbe()'s synchronous
+/// fast-skip path trust idx's cached completed_areas/attempted_areas flag
+/// WITHOUT firing a live probe? Only when idx has actually been reconciled
+/// by a probe (area_verified_generation has an entry for it) at exactly the
+/// CURRENT area-list generation — i.e. nothing has edited/deleted/re-added
+/// the area list since. An index that has never been probed this process,
+/// or was probed before the generation last moved, is unsafe to trust: the
+/// area now AT that index may not be the one the cached flag describes. The
+/// caller must fall through to a real probe instead, which re-verifies via
+/// processResponse's id-reconciliation.
+bool isSkipVerified(const BTContext& ctx, uint32_t idx)
+{
+  const auto it = ctx.area_verified_generation.find(idx);
+  return it != ctx.area_verified_generation.end() && it->second == ctx.current_area_list_generation;
+}
+}  // namespace
+
 BT::NodeStatus GetNextUnmowedArea::onStart()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
@@ -2172,8 +2191,18 @@ BT::NodeStatus GetNextUnmowedArea::onStart()
   // exhausting its budget — so a single boundary-recovery preemption
   // does NOT permanently disable the area. attempted_areas is cleared
   // by EndSession at session end.
-  while (current_area_idx_ < max_areas_ && (ctx->attempted_areas.count(current_area_idx_) > 0 ||
-                                            ctx->completed_areas.count(current_area_idx_) > 0))
+  //
+  // mowglinext#637 phase 2: this synchronous skip is only taken when
+  // isSkipVerified() confirms the index was reconciled by a live probe at
+  // the CURRENT area-list generation — otherwise the GUI's edit/delete flow
+  // could have shifted a different, genuinely unmowed area onto this index
+  // since it was last probed, and skipping it here would never be corrected
+  // (no probe ever fires for it again this pass). An unverified index falls
+  // through the loop instead and gets a real probe below, which reconciles
+  // it via processResponse's id check.
+  while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
+         (ctx->attempted_areas.count(current_area_idx_) > 0 ||
+          ctx->completed_areas.count(current_area_idx_) > 0))
   {
     RCLCPP_INFO(ctx->node->get_logger(),
                 "GetNextUnmowedArea: area %u already %s this session, skipping",
@@ -2256,13 +2285,16 @@ BT::NodeStatus GetNextUnmowedArea::onRunning()
 
 // Advance current_area_idx_ past any already-completed/attempted areas and
 // fire the next existence probe. Returns RUNNING (probe in flight) or FAILURE
-// (no candidate area remains).
+// (no candidate area remains). mowglinext#637 phase 2: the synchronous skip
+// is gated by isSkipVerified() for the same reason as onStart()'s — see the
+// comment there.
 BT::NodeStatus GetNextUnmowedArea::advanceAndProbe()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
   current_area_idx_++;
-  while (current_area_idx_ < max_areas_ && (ctx->attempted_areas.count(current_area_idx_) > 0 ||
-                                            ctx->completed_areas.count(current_area_idx_) > 0))
+  while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
+         (ctx->attempted_areas.count(current_area_idx_) > 0 ||
+          ctx->completed_areas.count(current_area_idx_) > 0))
   {
     current_area_idx_++;
   }
@@ -2314,6 +2346,52 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   }
 
   areas_queried_++;
+
+  // mowglinext#637 phase 2: reconcile this index's identity against the id
+  // last observed for it (loaded from disk at boot, or recorded by an
+  // earlier probe this session — see ctx->area_ids). The GUI's area
+  // edit/delete flow rebuilds the WHOLE area list (map_server's on_add_area,
+  // area_manager.cpp: clear_map + one add_area per surviving area), which
+  // can shift what area a given index refers to, live and mid-session, not
+  // only across a restart. Every per-index map below is keyed by index, so
+  // trusting it without this check would either silently skip a genuinely
+  // unmowed area (it inherited the old occupant's "completed" flag) or hand
+  // it the old occupant's swath/cross-hatch history. A mismatch — or the
+  // first time this index has ever been probed — just resets this slot's
+  // per-index state to "never seen": at worst that re-verifies or re-mows an
+  // area, it never causes one to be skipped or misattributed.
+  if (const auto it = ctx->area_ids.find(current_area_idx_);
+      it != ctx->area_ids.end() && it->second != response->area.id)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "GetNextUnmowedArea: area index %u now refers to a different area "
+                "(id %u -> %u) — the area list changed since this progress was recorded; "
+                "discarding stale per-index state for this index",
+                current_area_idx_,
+                it->second,
+                response->area.id);
+    ctx->completed_areas.erase(current_area_idx_);
+    ctx->attempted_areas.erase(current_area_idx_);
+    ctx->area_completed_swaths.erase(current_area_idx_);
+    ctx->area_resume_pose_index.erase(current_area_idx_);
+    ctx->area_path_pose_count.erase(current_area_idx_);
+    ctx->area_plan_fingerprint.erase(current_area_idx_);
+    ctx->area_swath_count.erase(current_area_idx_);
+    ctx->cross_hatch.erase(current_area_idx_);
+    ctx->base_orientation_areas.erase(current_area_idx_);
+    ctx->area_attempt_count.erase(current_area_idx_);
+    ctx->area_last_coverage.erase(current_area_idx_);
+    ctx->area_start_blocked_count.erase(current_area_idx_);
+    ctx->area_guard_halt_count.erase(current_area_idx_);
+  }
+  ctx->area_ids[current_area_idx_] = response->area.id;
+  // This index is now verified against the CURRENT area-list generation (the
+  // live value from map_server's ~/area_list_generation topic, not whatever
+  // it was when the probe was SENT) — the freshest information available at
+  // the moment we act on the response. onStart()/advanceAndProbe()'s
+  // synchronous fast-skip path may trust this index's completed/attempted
+  // flag only as long as the generation does not move again.
+  ctx->area_verified_generation[current_area_idx_] = ctx->current_area_list_generation;
 
   // Navigation-only areas are transit corridors, NOT mowing targets — they
   // carry is_navigation_area=true and must never be selected for coverage (the
