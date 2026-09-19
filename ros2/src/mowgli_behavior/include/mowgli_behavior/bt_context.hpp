@@ -165,6 +165,18 @@ struct BTContext
   /// iterates normally.
   std::optional<uint32_t> single_area_target;
 
+  /// Stable id (mowglinext#637) of the area single_area_target's index
+  /// pointed at when it was locked in — captured from the FIRST probe
+  /// response after the request was consumed (NOT from the ~/start_in_area
+  /// request itself, which only ever carries an index). Every later probe
+  /// of single_area_target's index is checked against this in
+  /// GetNextUnmowedArea::processResponse(); a mismatch means the area list
+  /// was edited/reordered since selection and single_area_target's index
+  /// now names a DIFFERENT area than the one requested — the targeted run
+  /// ends rather than silently mowing whatever is there now. Reset
+  /// alongside single_area_target (both cleared together, always).
+  std::optional<uint32_t> single_area_target_id;
+
   /// Areas already dispatched to PlanCoverageArea+FollowStrip in the
   /// current session. GetNextUnmowedArea skips any index in this set
   /// when iterating. An area is added here only after it is genuinely
@@ -794,6 +806,7 @@ struct BTContext
 inline void clearSingleAreaMode(BTContext& ctx)
 {
   ctx.single_area_target.reset();
+  ctx.single_area_target_id.reset();
   ctx.target_area_index.reset();
 }
 

@@ -705,6 +705,92 @@ TEST_F(GetNextUnmowedAreaTest, TargetedRunDoesNotRollOverToTheNextArea)
       << "a finished targeted run must dock via MOWING_COMPLETE, not report a coverage failure";
 }
 
+// ---------------------------------------------------------------------------
+// mowglinext#637 — single_area_target is stored as an INDEX, which the
+// per-index id-reconciliation above does not protect: it only stops a
+// DIFFERENT index from inheriting stale progress, not this index from being
+// dispatched when it no longer holds the area the operator actually
+// selected. Field-confirmed 2026-09-19: targeting area 0 (id 6), reordering
+// the area list while paused so id 7 ended up at index 0, then Resume —
+// the per-index reconciliation correctly discarded id 6's stale state, and
+// this dispatch, with nothing left to check the id against, silently
+// started mowing id 7 instead.
+// ---------------------------------------------------------------------------
+
+// The FIRST successful dispatch of a fresh target locks in its id, so later
+// dispatches have something to verify against.
+TEST_F(GetNextUnmowedAreaTest, TargetedRunLocksInAreaIdOnFirstDispatch)
+{
+  areas[0] = {"front_lawn", /*is_navigation_area=*/false, /*id=*/100};
+  waitForService();
+
+  ctx->target_area_index = 0;
+  auto tree = makeTree(/*max_areas=*/5);
+  EXPECT_EQ(tickToCompletion(tree), BT::NodeStatus::SUCCESS);
+  ASSERT_TRUE(ctx->single_area_target_id.has_value());
+  EXPECT_EQ(*ctx->single_area_target_id, 100u);
+}
+
+// The regression itself: once locked in, a later dispatch of the SAME index
+// must not proceed if the area list changed underneath it — it must end the
+// run instead of mowing whatever now sits there.
+TEST_F(GetNextUnmowedAreaTest, TargetedRunEndsCleanlyWhenTargetMovedToADifferentIndex)
+{
+  areas[0] = {"new_occupant", /*is_navigation_area=*/false, /*id=*/200};
+  waitForService();
+  // Simulate a resumed session: index 0 was targeted and locked in against
+  // id 100 (the area the operator actually selected), but the area list was
+  // edited since — index 0 now holds a different area (id 200).
+  ctx->single_area_target = 0u;
+  ctx->single_area_target_id = 100u;
+
+  auto tree = makeTree(/*max_areas=*/5);
+  EXPECT_EQ(tickToCompletion(tree), BT::NodeStatus::FAILURE)
+      << "must not silently mow the area that replaced the targeted one";
+  EXPECT_FALSE(ctx->coverage_all_complete)
+      << "this is a genuine failure to carry out the request, not a clean finish — "
+         "must route to the failure/dock path, not be read as MOWING_COMPLETE";
+  EXPECT_FALSE(ctx->single_area_target.has_value())
+      << "the broken target must be cleared, not retried forever against the wrong area";
+  EXPECT_FALSE(ctx->single_area_target_id.has_value());
+}
+
+// Control: a matching id changes nothing — the targeted run proceeds exactly
+// as it always has.
+TEST_F(GetNextUnmowedAreaTest, TargetedRunContinuesNormallyWhenTargetIdStillMatches)
+{
+  areas[0] = {"front_lawn", /*is_navigation_area=*/false, /*id=*/100};
+  waitForService();
+  ctx->single_area_target = 0u;
+  ctx->single_area_target_id = 100u;  // same id the fake server still reports
+
+  auto tree = makeTree(/*max_areas=*/5);
+  EXPECT_EQ(tickToCompletion(tree), BT::NodeStatus::SUCCESS);
+  EXPECT_EQ(ctx->current_area, 0);
+}
+
+// A FRESH ~/start_in_area request (a new target_area_index) must reset any
+// id left over from a PRIOR target — otherwise selecting a new area that
+// happens to land on an index a previous (different) target used to occupy
+// would immediately "detect" a bogus mismatch against the OLD target's id
+// and refuse to mow the newly-selected area at all.
+TEST_F(GetNextUnmowedAreaTest, FreshTargetRequestDoesNotCompareAgainstAPriorTargetsId)
+{
+  areas[0] = {"second_selection", /*is_navigation_area=*/false, /*id=*/300};
+  waitForService();
+  // Leftover from an earlier, unrelated targeted run on a different area
+  // that used to sit at index 0.
+  ctx->single_area_target_id = 999u;
+
+  ctx->target_area_index = 0;
+  auto tree = makeTree(/*max_areas=*/5);
+  EXPECT_EQ(tickToCompletion(tree), BT::NodeStatus::SUCCESS)
+      << "a fresh selection must not be compared against a stale prior target's id";
+  EXPECT_EQ(ctx->current_area, 0);
+  ASSERT_TRUE(ctx->single_area_target_id.has_value());
+  EXPECT_EQ(*ctx->single_area_target_id, 300u) << "re-locked against the NEW selection";
+}
+
 // An explicitly targeted area is re-mown even when it is already marked
 // completed/attempted this session (the operator asked for it on purpose).
 TEST_F(GetNextUnmowedAreaTest, TargetedRunReMowsAnAlreadyCompletedArea)
