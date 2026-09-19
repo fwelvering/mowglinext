@@ -453,6 +453,9 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
       create_publisher<geometry_msgs::msg::PoseStamped>("~/docking_pose",
                                                         rclcpp::QoS(1).transient_local());
 
+  area_list_generation_pub_ = create_publisher<std_msgs::msg::UInt64>(
+      "~/area_list_generation", rclcpp::QoS(1).transient_local());
+
   // ── Obstacle-tracker snapshot (monitoring only) ───────────────────────
   // The tracker output is no longer auto-mirrored into the classification
   // layer or obstacle_polygons_. We only cache the most recent message so
@@ -550,6 +553,11 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
 
   // Resize map to fit loaded areas (if any).
   resize_map_to_areas();
+
+  // Publish a baseline area-list generation now that areas_ reflects the
+  // initial load, so a subscriber started before the first edit still gets
+  // a value (transient_local also covers one started after).
+  bump_area_list_generation();
 
   // Publish docking pose if available (transient_local ensures late subscribers get it).
   if (docking_pose_set_)
