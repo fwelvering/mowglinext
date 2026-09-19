@@ -304,15 +304,14 @@ private:
     // depth 1 to match the publisher (map_server_node ~/mow_progress), so a
     // sample is available even if the first area finishes its pass before a
     // fresh publish tick.
-    mow_progress_sub_ =
-        create_subscription<nav_msgs::msg::OccupancyGrid>(
-            "/map_server_node/mow_progress",
-            rclcpp::QoS(1).transient_local(),
-            [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr msg)
-            {
-              std::lock_guard<std::mutex> lock(context_->context_mutex);
-              context_->latest_mow_progress = *msg;
-            });
+    mow_progress_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        "/map_server_node/mow_progress",
+        rclcpp::QoS(1).transient_local(),
+        [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr msg)
+        {
+          std::lock_guard<std::mutex> lock(context_->context_mutex);
+          context_->latest_mow_progress = *msg;
+        });
 
     // Repeat-dig escalation feed for DigObstructionGuard. The bridge latches
     // this after dig_escalate_count dig latches inside dig_escalate_radius_m
