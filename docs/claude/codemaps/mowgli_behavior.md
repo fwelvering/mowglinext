@@ -22,6 +22,7 @@
 | Area re-index safety (mowglinext#637 phase 2) | `src/coverage_nodes.cpp` `GetNextUnmowedArea::processResponse()` id-reconciliation block + `isSkipVerified()` (anonymous namespace, gates `onStart()`/`advanceAndProbe()`'s synchronous fast-skip); `bt_context.hpp` `area_ids` / `current_area_list_generation` / `area_verified_generation`; live generation from `map_server_node`'s `~/area_list_generation` (`std_msgs/UInt64`, transient_local, bumped on every `~/add_area`). Field-confirmed 2026-09-19 this does NOT by itself protect `single_area_target` (see next row) |
 | Targeted single-area run identity (mowglinext#637) | `src/coverage_nodes.cpp` `GetNextUnmowedArea::processResponse()`, the `single_area_target`/`single_area_target_id` block right after the id-reconciliation above; `bt_context.hpp` `single_area_target_id`. `single_area_target` is an INDEX (set from `~/start_in_area`'s one-shot `target_area_index`), which the per-index reconciliation does not protect — a live reorder while paused can leave it pointing at a DIFFERENT area than the one the operator selected, and the reconciliation above would happily discard the old occupant's stale state and let the wrong area dispatch. `single_area_target_id` locks in the target's stable id on the first successful probe and is checked on every later probe of that index; a mismatch ends the run (FAILURE, `coverage_all_complete` left false) instead of silently mowing the wrong area — no scan-and-relocate, by design |
 | Blade on/off during coverage & transit gap guard | `src/coverage_nodes.cpp` `FollowStrip::sendCurrentSwath` :600-690 (`kSegmentTransitGap` from `mowgli_interfaces/coverage_geometry.hpp:26`), `setBladeEnabled` :1118 |
+| Coverage-completion plausibility cross-check (issue #680) | `include/mowgli_behavior/mow_coverage_plausibility.hpp` (pure: `ComputeMowedFraction`, `PointInPolygon`, `kMinPlausibleMowedFraction`); `FollowStrip::checkCoveragePlausibility` (`src/coverage_nodes.cpp`, called from `advance()` when every swath is done) compares `ctx->latest_mow_progress` (subscribed `behavior_tree_node.cpp`, `/map_server_node/mow_progress`) against `ctx->current_area_polygon`/`current_area_obstacles` (populated by `PlanCoverageArea` alongside `current_strip_*`); sets `ctx->coverage_plausibility_warning`, folded into `HighLevelStatus.sub_state_name` as `"COVERAGE_INCOMPLETE"` by `status_snapshot.cpp`'s live-override projection; cleared by `EndSession` |
 | Obstacle detour inside a sub-path | `include/mowgli_behavior/detour_resume.hpp` (`decideDetour`, `footprintClear`) + `FollowStrip::tryStartDetour` `src/coverage_nodes.cpp` :1133+ |
 | LocalizationGuard signal (`WAITING_FOR_RTK`) | `include/mowgli_behavior/localization_health.hpp` (`LocalizationHealthMonitor`, `PersistentLatch`) + `behavior_tree_node.cpp` :285-295, :330-340, :427-474, `updateLocalizationHealthLocked` :658 |
 | BoundaryGuard soft recovery | `src/navigation_nodes.cpp` `NavigateInsideBoundary` :410-760 (get_recovery_point → keepout off → clear → nav → BackUp fallback → keepout on) |
@@ -44,7 +45,7 @@
 | File | Lines | Purpose |
 |------|-------|---------|
 | **`ros2/src/mowgli_behavior/`** | | |
-| `CMakeLists.txt` | 612 | One executable `behavior_tree_node`; 19 `ament_add_gtest` targets (each links only the `.cpp` it needs; two get `MOWGLI_MAIN_TREE_PATH` for structural XML checks) |
+| `CMakeLists.txt` | 612 | One executable `behavior_tree_node`; 20 `ament_add_gtest` targets (each links only the `.cpp` it needs; two get `MOWGLI_MAIN_TREE_PATH` for structural XML checks) |
 | `package.xml` | 41 | Deps: ament_index_cpp, rclcpp(_action), behaviortree_cpp, tf2*, nav2_msgs, nav_msgs, geometry_msgs, sensor_msgs, std_msgs, std_srvs, action_msgs, rcl_interfaces, mowgli_interfaces |
 | `config/behavior_tree.yaml` | 11 | `behavior_params` for both launch files: `tree_file`, `tick_rate`, `battery_low_pct`, `battery_critical_pct` (the two `_pct` keys are NOT declared param names — ignored) |
 | `config/behavior_tree_small_garden.yaml` | 12 | Same + `dock_pose` string; not referenced by any launch file |
@@ -52,9 +53,10 @@
 | `trees/navigate_to_pose.xml` | 79 | Nav2 `bt_navigator` tree: ControllerSelector/GoalCheckerSelector/PlannerSelector + replan only if path invalid, RoundRobin recovery |
 | **`include/mowgli_behavior/`** | | |
 | `action_nodes.hpp` | 33 | Umbrella header; declares `registerAllNodes()` |
-| `bt_context.hpp` | ~680 | `BTContext` shared via blackboard key `"context"`; `clearSingleAreaMode()`; dispatch budgets `kMaxAreaAttempts=5`, `kMaxStartBlockedAttempts=3`, `kMaxGuardHaltedPasses=200` |
+| `bt_context.hpp` | ~700 | `BTContext` shared via blackboard key `"context"`; `clearSingleAreaMode()`; dispatch budgets `kMaxAreaAttempts=5`, `kMaxStartBlockedAttempts=3`, `kMaxGuardHaltedPasses=200` |
 | `condition_nodes.hpp` | 830 | 25 `BT::ConditionNode` classes + ports |
-| `coverage_nodes.hpp` | 600 | `FollowStrip`, `TransitToStrip`, `DetourAroundObstacle`, `GetNextUnmowedArea`, `PlanCoverageArea`; pure helpers `resolveResumeLocation`, `refreshSwathProgress`, `coveragePercentFromCursor`, `forwardSkipIndex`; `kMowAngleAutoDeg=-1` |
+| `coverage_nodes.hpp` | ~610 | `FollowStrip`, `TransitToStrip`, `DetourAroundObstacle`, `GetNextUnmowedArea`, `PlanCoverageArea`; pure helpers `resolveResumeLocation`, `refreshSwathProgress`, `coveragePercentFromCursor`, `forwardSkipIndex`; `kMowAngleAutoDeg=-1` |
+| `mow_coverage_plausibility.hpp` | ~180 | Pure, ROS-free: `ComputeMowedFraction`, `PointInPolygon`, `MowProgressGridView`, `kMinPlausibleMowedFraction=0.5`, `kMowedCellThreshold=50` (issue #680, coverage-completion cross-check) |
 | `navigation_nodes.hpp` | 389 | `StopMoving`, `ClearCostmap`, `SetNav2Lifecycle`, `NavigateToPose`, `BackUp`, `SetNavMode`, `NavigateInsideBoundary` (phase enum) |
 | `docking_nodes.hpp` | 147 | `DockRobot`, `UndockRobot`, `RecordResumeUndockFailure` |
 | `escape_nodes.hpp` | 147 | `EscapeStartBlocked` (`kBladeStateMaxAgeSec=2`, `kMaxTickDtSec=0.5`, `kSignalHoldoffSec=1`) |
@@ -83,7 +85,7 @@
 | `calibration_nodes.cpp` | 433 | Undock line-fit yaw → `/fusion_graph_node/set_pose`; forward-drive yaw seed |
 | `recording_nodes.cpp` | 515 | Area recording, DP simplification, save via `/map_server_node/add_area` |
 | `status_nodes.cpp` | 240 | Status publish, `EndSession` (session-scoped clears :159-215), `ClearCommand` |
-| `status_snapshot.cpp` | ~70 | Tree-owned vs live field split for `HighLevelStatus`; the one exception is `sub_state_name`, live-overridden to `"TRANSIT"` from `BTContext::transiting` (set by `FollowStrip`, `coverage_nodes.cpp`) — consumed by `mowgli_leds`' `kTransit` ring pattern |
+| `status_snapshot.cpp` | ~85 | Tree-owned vs live field split for `HighLevelStatus`; two exceptions to `sub_state_name`'s passthrough, live-overridden from `BTContext`: `"TRANSIT"` from `transiting` (set by `FollowStrip`, `coverage_nodes.cpp`, consumed by `mowgli_leds`' `kTransit` ring pattern), else `"COVERAGE_INCOMPLETE"` from `coverage_plausibility_warning` (issue #680) — `TRANSIT` wins if both are true on the same tick |
 | `utility_nodes.cpp` | 267 | Blade service, waits, `SaveObstacles`, `ResetEmergency` |
 | `coverage_persistence.cpp` | 353 | Text file `coverage_resume.txt` (atomic tmp+rename): `current_command`, `single_area_target`, `current_area`, `completed_areas`, per-`area` rows (id, pose_count, fingerprint, resume, completed swaths) |
 | `battery_filter.cpp` | 85 | Rate-independent low-pass on `v_battery` |
@@ -106,9 +108,10 @@
 | `test_localization_health.cpp` | 419 | 16 tests: pivot σ inflation must NOT pause; plain-GPS fallback must; stale feed |
 | `test_battery_critical_resume.cpp` | 225 | 3 tests: critical-battery tail auto-continues, only dead charger ends session |
 | `test_guard_fallthrough.cpp` | ~360 | 6 tests: guard handlers return FAILURE + structural `<AlwaysFailure/>` check on every blocking guard in `main_tree.xml` + `<MarkGuardHalt/>` is the first handler child in `SensorSafetyGuard` / `LocalizationGuard` |
-| `test_high_level_status_snapshot.cpp` | 185 | 8 tests: republished status carries live battery/progress, tree-owned state untouched, `transiting` overrides `sub_state_name` to `"TRANSIT"` |
+| `test_high_level_status_snapshot.cpp` | ~215 | 10 tests: republished status carries live battery/progress, tree-owned state untouched, `transiting` overrides `sub_state_name` to `"TRANSIT"`, `coverage_plausibility_warning` overrides it to `"COVERAGE_INCOMPLETE"` (issue #680), `TRANSIT` wins if both are set |
 | `test_battery_filter.cpp` | 243 | 13 tests: sag immunity, rate independence, invalid reading never → 0 % |
 | `test_dock_alignment.cpp` | 191 | 11 tests: along/cross decomposition, yaw-drift band |
+| `test_mow_coverage_plausibility.cpp` | ~185 | 8 tests: `PointInPolygon` inside/outside/degenerate; `ComputeMowedFraction` — headland-only band falls below the floor, fully-mowed interior is plausible, obstacle holes excluded from the denominator, degenerate polygon / empty grid data both read as not-plausible |
 
 ## Runtime surface
 
@@ -127,6 +130,7 @@ Blackboard: `"context"` = `std::shared_ptr<BTContext>`; keys seeded at startup (
 | `/hardware_bridge/power` | `mowgli_interfaces/msg/Power` | sub | 10 | battery filter → `battery_percent`; `charger_enabled` = `IsCharging` (:204) |
 | `/cmd_vel` | `geometry_msgs/msg/TwistStamped` | sub | 10 | twist_mux merged output; last-motion sign for #487 escape (:171) |
 | `/map_server_node/replan_needed`, `/boundary_violation`, `/lethal_boundary_violation` | `std_msgs/msg/Bool` | sub | 1 / 10 / 10 | `map_server_node` (:232-269) |
+| `/map_server_node/mow_progress` | `nav_msgs/msg/OccupancyGrid` | sub | 1, transient_local | `map_server_node`; `ctx->latest_mow_progress` for `FollowStrip::checkCoveragePlausibility` (issue #680) — no other consumer in this node |
 | `/hardware_bridge/dig_event` | `mowgli_interfaces/msg/DigEvent` | sub | depth 10, **VOLATILE** (publisher is transient_local — a replayed dig from a previous session must not become a skip zone) | `hardware_bridge_node` → `session_dig_points` / `dig_event_count` for `FollowStrip` (`dig_skip.hpp`) |
 | `/odometry/filtered_map` | `nav_msgs/msg/Odometry` | sub | 5 | `fusion_graph_node`; σ_xy backstop only (:330) |
 | `/gps/absolute_pose` | `mowgli_interfaces/msg/AbsolutePose` | sub | 10 | `navsat_to_absolute_pose_node`; `gps_x/y`, undock sample buffer, legacy fix fallback (:345) |
