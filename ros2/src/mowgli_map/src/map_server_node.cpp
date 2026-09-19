@@ -453,8 +453,9 @@ MapServerNode::MapServerNode(const rclcpp::NodeOptions& options)
       create_publisher<geometry_msgs::msg::PoseStamped>("~/docking_pose",
                                                         rclcpp::QoS(1).transient_local());
 
-  area_list_generation_pub_ = create_publisher<std_msgs::msg::UInt64>(
-      "~/area_list_generation", rclcpp::QoS(1).transient_local());
+  area_list_generation_pub_ =
+      create_publisher<std_msgs::msg::UInt64>("~/area_list_generation",
+                                              rclcpp::QoS(1).transient_local());
 
   // ── Obstacle-tracker snapshot (monitoring only) ───────────────────────
   // The tracker output is no longer auto-mirrored into the classification
