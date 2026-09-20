@@ -75,20 +75,20 @@ TEST(GpsStuckImplausible, SmallRotationStaysWithinStandDownBudget)
 
 TEST(GpsValueChanged, IdenticalValuesAreUnchanged)
 {
-  EXPECT_FALSE(fg::GpsValueChanged(53.089172501, 6.169298185333333,
-                                   53.089172501, 6.169298185333333));
+  EXPECT_FALSE(
+      fg::GpsValueChanged(53.089172501, 6.169298185333333, 53.089172501, 6.169298185333333));
 }
 
 TEST(GpsValueChanged, DifferingLatitudeIsChanged)
 {
-  EXPECT_TRUE(fg::GpsValueChanged(53.089172502, 6.169298185333333,
-                                  53.089172501, 6.169298185333333));
+  EXPECT_TRUE(
+      fg::GpsValueChanged(53.089172502, 6.169298185333333, 53.089172501, 6.169298185333333));
 }
 
 TEST(GpsValueChanged, DifferingLongitudeIsChanged)
 {
-  EXPECT_TRUE(fg::GpsValueChanged(53.089172501, 6.169298185333334,
-                                  53.089172501, 6.169298185333333));
+  EXPECT_TRUE(
+      fg::GpsValueChanged(53.089172501, 6.169298185333334, 53.089172501, 6.169298185333333));
 }
 
 TEST(GpsValueChanged, NanPreviousAlwaysCountsAsChanged)
