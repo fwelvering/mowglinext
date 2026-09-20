@@ -33,6 +33,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <tf2_ros/buffer.hpp>
 #include <tf2_ros/transform_broadcaster.hpp>
 #include <tf2_ros/transform_listener.hpp>
@@ -54,7 +55,6 @@
 #include <mowgli_interfaces/msg/high_level_status.hpp>
 #include <mowgli_interfaces/msg/status.hpp>
 #include <sophus/se2.hpp>
-#include <std_msgs/msg/int32.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
