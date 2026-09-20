@@ -67,6 +67,13 @@ struct GraphStats
   // process restart). Each counter buckets a specific rejection cause
   // so the diagnostics topic can show what's actually failing.
   uint64_t gps_rejects_wrongfix = 0;  // jump in /fix > thresh with stationary wheel
+  // /fix samples withheld while LocalizationMonitorNode reports DEAD_RECKONING
+  // (mowglinext#694) — its own /gps/fix + /gps/status pairing caught a payload
+  // frozen at an identical position under a live, advancing receipt stamp,
+  // which OnGnss's own receipt-stamp dedup cannot distinguish from genuine new
+  // observations. A nonzero, climbing count without a matching drop in fix
+  // rate means the receiver is delivering stale payloads under fresh stamps.
+  uint64_t gps_rejects_dead_reckoning = 0;
   uint64_t stationary_hand_push = 0;  // wheel stationary but gyro disagrees
   uint64_t slip_veto = 0;  // ticks where wheel translation was vetoed by gyro
   // Adaptive process-noise telemetry. residual_ema_rad is the
@@ -173,6 +180,9 @@ public:
 
   // GPS wrong-fix rejection counter; mutex-protected.
   void RecordGpsRejectWrongFix();
+
+  // GPS dead-reckoning-payload rejection counter; mutex-protected.
+  void RecordGpsRejectDeadReckoning();
 
   // ── Visualization snapshots ─────────────────────────────────────
   // Optimized 2D pose for every variable currently in the iSAM2
@@ -341,6 +351,7 @@ private:
   // Record*() mutators below so mu_ wraps them — Stats() makes a
   // single locked copy.
   uint64_t stats_gps_rejects_wrongfix_ = 0;
+  uint64_t stats_gps_rejects_dead_reckoning_ = 0;
   uint64_t stats_hand_push_ = 0;
   uint64_t stats_slip_veto_ = 0;
   // Count of iSAM2 indeterminate-system catches that triggered a graph
