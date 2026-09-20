@@ -685,6 +685,19 @@ private:
   // /gps/fix stationary) and below vx_max≈0.30 m/s × 0.1 s = 30 mm of
   // legitimate motion. See rtk_wrongfix_gate.hpp for the decision function.
   double rtk_wrongfix_max_jump_m_ = 0.05;
+  // Stuck-receiver payload-value gate state (mowglinext#694,
+  // gps_stuck_gate.hpp). Independent of the wrong-fix accumulators above:
+  // those reset on every fix (accept or reject); these reset ONLY when
+  // msg->latitude/longitude actually differs from the previous sample —
+  // see gps_stuck_gate.hpp's header comment for why that distinction is
+  // load-bearing. NaN-initialized so the very first fix always counts as a
+  // change (NaN != NaN).
+  double last_gps_lat_ = std::numeric_limits<double>::quiet_NaN();
+  double last_gps_lon_ = std::numeric_limits<double>::quiet_NaN();
+  double wheel_dist_since_gps_value_changed_m_ = 0.0;
+  double abs_dtheta_since_gps_value_changed_rad_ = 0.0;
+  double gps_stuck_min_wheel_dist_m_ = 1.0;
+  double gps_stuck_max_yaw_rad_ = 1.047;
   // Dock-pose hold while charging: re-assert a firm ForceAnchor at the FULL
   // dock_pose (x,y,yaw) ONCE PER NEW NODE, replacing the weak live-GPS factor
   // that walked the docked pose off the anchor (field 2026-06-10: 11.5 cm + 53°
