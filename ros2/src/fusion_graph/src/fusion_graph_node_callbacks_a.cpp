@@ -439,6 +439,39 @@ void FusionGraphNode::OnGnss(sensor_msgs::msg::NavSatFix::ConstSharedPtr msg)
     dock_gps_disagreement_m_ = 0.0;
   }
   const bool docked_gps_override = last_is_charging_valid_ && last_is_charging_;
+
+  // Payload-staleness backstop (mowglinext#694). gnss_observation_tracker_
+  // above only rejects a REPUBLISHED sample (identical receipt stamp); it
+  // cannot see a receiver whose receipt stamp keeps genuinely advancing while
+  // the position it reports has stopped moving — field-confirmed 2026-09-20,
+  // an RTK-Fixed receiver kept /gps/fix frozen at one lat/lon for minutes
+  // under fresh, distinct receipt stamps, so every sample looked like a valid
+  // new observation to receipt-stamp identity alone. LocalizationMonitorNode
+  // catches this independently, by pairing /gps/fix with /gps/status's typed
+  // position_observation_sequence (a check deliberately not duplicated inside
+  // this node — see the MGNSS-002 comment above). Reuse its verdict here as a
+  // trust gate: fail open (never latches) until a mode_id sample has actually
+  // been seen, same reasoning as every other optional-signal gate in this
+  // node — a bring-up without mowgli_localization's LocalizationMonitorNode
+  // wired up must not lose GPS trust it never had a way to regain.
+  //
+  // Placed AFTER the docking block on purpose: while genuinely docked (not
+  // yielding), dock_pose is authoritative regardless of receiver health —
+  // Invariant 6 — so that branch's periodic re-anchor must not be gated on
+  // GPS trust it does not need. It DOES apply to the "yielding" docked case
+  // just below (a confident RTK-Fixed sample overriding the dock prior),
+  // where a stuck receiver must not be allowed to win that override.
+  if (last_position_dead_reckoning_valid_ && last_position_dead_reckoning_)
+  {
+    graph_->RecordGpsRejectDeadReckoning();
+    RCLCPP_WARN_THROTTLE(get_logger(),
+                         *get_clock(),
+                         5000,
+                         "fusion_graph: LocalizationMonitorNode reports DEAD_RECKONING "
+                         "(position payload stale under a live receipt stamp) — "
+                         "GNSS sample withheld");
+    return;
+  }
   // GNSS bridges preserve the receiver measurement epoch in header.stamp,
   // which may precede callback delivery by hundreds of milliseconds or more.
   // Resolve that epoch only after the quality/docking gates above so the

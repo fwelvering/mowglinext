@@ -54,6 +54,7 @@
 #include <mowgli_interfaces/msg/high_level_status.hpp>
 #include <mowgli_interfaces/msg/status.hpp>
 #include <sophus/se2.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -90,6 +91,9 @@ private:
   void OnScan(sensor_msgs::msg::LaserScan::ConstSharedPtr msg);
   void OnHighLevelStatus(mowgli_interfaces::msg::HighLevelStatus::ConstSharedPtr msg);
   void OnHardwareStatus(mowgli_interfaces::msg::Status::ConstSharedPtr msg);
+  // LocalizationMonitorNode's DEAD_RECKONING verdict (mowglinext#694) — see
+  // last_position_dead_reckoning_ for why OnGnss needs this independent signal.
+  void OnLocalizationMode(std_msgs::msg::Int32::ConstSharedPtr msg);
   // The docking server publishes /cmd_vel_docking only while it is running the
   // final graceful approach. We use that as the "dock approach in progress"
   // signal to stabilise the pose (see DockingApproachActive()).
@@ -552,6 +556,7 @@ private:
   rclcpp::Subscription<mowgli_interfaces::msg::Status>::SharedPtr sub_hw_status_;
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr sub_docking_cmd_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_set_pose_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr sub_localization_mode_;
 
   // Save-graph service handle.
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_save_;
@@ -603,6 +608,23 @@ private:
   bool last_hl_state_valid_ = false;
   bool last_is_charging_ = false;
   bool last_is_charging_valid_ = false;
+  // LocalizationMonitorNode's DEAD_RECKONING verdict on /mowgli/localization/
+  // mode_id (mowglinext#694). Independent of gnss_observation_tracker_'s
+  // receipt-stamp dedup above: that tracker only catches a REPUBLISHED /gps/fix
+  // (identical receipt stamp). Field-confirmed 2026-09-20, the pinned Universal
+  // GNSS receiver instead advances the receipt stamp on every republish while
+  // the position payload itself stays frozen — each message looks like a
+  // genuinely new observation to receipt-stamp identity alone. LocalizationMonitorNode
+  // (mowgli_localization) independently pairs /gps/fix with /gps/status's typed
+  // position_observation_sequence (NavSatStatusAssociation) to catch exactly
+  // this, and already does so correctly in the field; OnGnss reuses that
+  // verdict as an additional trust gate rather than re-deriving it via a
+  // second /gps/status subscription here (Invariant 1: /gps/fix stays a direct
+  // subscription; associating it with /gps/status a second time inside this
+  // node was deliberately deferred — see gnss_observation_tracker_'s
+  // MGNSS-002 comment in OnGnss).
+  bool last_position_dead_reckoning_ = false;
+  bool last_position_dead_reckoning_valid_ = false;
   // One-shot per dock session: ensures SeedFromDockPose fires exactly
   // once per docked interval, even when the boot-while-docked race
   // means neither the rising_edge nor boot_while_docked branches can
