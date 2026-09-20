@@ -525,15 +525,15 @@ TEST(LocalizationHealthTest, PositionFreshRecoveryReleasesTheLatch)
   // The position monitor reports a genuinely fresh observation again; the
   // default gnss_resume_persist_s (2 s) governs how long it must hold.
   RunFor(&mon,
-        20.0,
-        10.0,
-        []()
-        {
-          auto obs = HealthyFix();
-          obs.position_mode_seen = true;
-          obs.position_dead_reckoning = false;
-          return obs;
-        });
+         20.0,
+         10.0,
+         []()
+         {
+           auto obs = HealthyFix();
+           obs.position_mode_seen = true;
+           obs.position_dead_reckoning = false;
+           return obs;
+         });
 
   EXPECT_FALSE(mon.degraded());
   EXPECT_EQ(mon.fault(), LocalizationFault::kNone);

@@ -591,18 +591,18 @@ private:
     // current mode immediately rather than only the next transition.
     localization_mode_sub_ =
         create_subscription<std_msgs::msg::Int32>("/mowgli/localization/mode_id",
-                                                   rclcpp::QoS(1).transient_local(),
-                                                   [this](std_msgs::msg::Int32::ConstSharedPtr msg)
-                                                   {
-                                                     std::lock_guard<std::mutex> lock(
-                                                         context_->context_mutex);
-                                                     loc_obs_.position_mode_seen = true;
-                                                     // LocalizationMode::DEAD_RECKONING == 0
-                                                     // (mowgli_localization/localization_monitor_policy.hpp).
-                                                     loc_obs_.position_dead_reckoning =
-                                                         (msg->data == 0);
-                                                     updateLocalizationHealthLocked();
-                                                   });
+                                                  rclcpp::QoS(1).transient_local(),
+                                                  [this](std_msgs::msg::Int32::ConstSharedPtr msg)
+                                                  {
+                                                    std::lock_guard<std::mutex> lock(
+                                                        context_->context_mutex);
+                                                    loc_obs_.position_mode_seen = true;
+                                                    // LocalizationMode::DEAD_RECKONING == 0
+                                                    // (mowgli_localization/localization_monitor_policy.hpp).
+                                                    loc_obs_.position_dead_reckoning =
+                                                        (msg->data == 0);
+                                                    updateLocalizationHealthLocked();
+                                                  });
 
     // collision_monitor state — used by IsObstacleStuck to detect when
     // the robot is wedged on an obstacle (PolygonStop active for ≥5 s).
