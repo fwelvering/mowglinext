@@ -215,6 +215,7 @@ class LatestState:
     fg_gyro_bias_z: Optional[float] = None
     fg_gps_rejects_wrongfix: Optional[int] = None
     fg_gps_rejects_dead_reckoning: Optional[int] = None
+    fg_gps_rejects_stuck_value: Optional[int] = None
     fg_cog_flip_recoveries: Optional[int] = None
     # localization_monitor_node's verdict on /mowgli/localization/mode_id
     # (mowglinext#694) — LocalizationMode::DEAD_RECKONING == 0. The signal
@@ -553,6 +554,8 @@ class MowSessionMonitor(Node):
                         self.state.fg_gps_rejects_wrongfix = _safe_int(kv.value)
                     elif kv.key == "gps_rejects_dead_reckoning":
                         self.state.fg_gps_rejects_dead_reckoning = _safe_int(kv.value)
+                    elif kv.key == "gps_rejects_stuck_value":
+                        self.state.fg_gps_rejects_stuck_value = _safe_int(kv.value)
                     elif kv.key == "cog_flip_recoveries":
                         self.state.fg_cog_flip_recoveries = _safe_int(kv.value)
 
@@ -777,6 +780,7 @@ class MowSessionMonitor(Node):
                     "gyro_bias_z": s.fg_gyro_bias_z,
                     "gps_rejects_wrongfix": s.fg_gps_rejects_wrongfix,
                     "gps_rejects_dead_reckoning": s.fg_gps_rejects_dead_reckoning,
+                    "gps_rejects_stuck_value": s.fg_gps_rejects_stuck_value,
                     "cog_flip_recoveries": s.fg_cog_flip_recoveries,
                 },
                 # LocalizationMode: 0=DEAD_RECKONING, 1=GPS_ONLY, 2=RTK_FLOAT,
@@ -970,6 +974,7 @@ class MowSessionMonitor(Node):
                 "final_bt_state_name": s.bt_state_name,
                 "dead_reckoning_sec": self.dead_reckoning_ticks / self.args.rate,
                 "final_gps_rejects_dead_reckoning": s.fg_gps_rejects_dead_reckoning,
+                "final_gps_rejects_stuck_value": s.fg_gps_rejects_stuck_value,
                 "final_localization_mode_id": s.localization_mode_id,
             }
         try:
