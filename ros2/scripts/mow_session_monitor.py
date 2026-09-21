@@ -634,10 +634,19 @@ class MowSessionMonitor(Node):
         # independent of /gps/fix's NavSatFix (a separate publish path inside
         # receiver_node). Field names differ slightly from the bridged
         # contract (FIX_TYPE_* enum is shifted by one, source_id/incarnation
-        # only exist here) — see universal_gnss_msgs/msg/GnssStatus.msg.
+        # only exist here) — see universal_gnss_msgs/msg/GnssStatus.msg. NOTE:
+        # this message's timestamp is a bare `stamp` field, NOT wrapped in a
+        # std_msgs/Header like the bridged mowgli_interfaces/GnssStatus is —
+        # msg.header.stamp raises AttributeError here (field-confirmed
+        # 2026-09-21: an uncaught exception in this callback propagated out of
+        # executor.spin_once() and killed the whole monitor process within a
+        # fraction of a second, silently, on every run after this callback was
+        # added). The upstream comment on this field is itself directly
+        # relevant to mowglinext#694: "a non-position update may advance this
+        # stamp while position_observation_sequence remains unchanged".
         with self.state_lock:
             s = self.state
-            s.universal_gnss_status_stamp_sec = _ros_stamp_sec(msg.header.stamp)
+            s.universal_gnss_status_stamp_sec = _ros_stamp_sec(msg.stamp)
             s.universal_gnss_status_lat = float(msg.latitude_deg)
             s.universal_gnss_status_lon = float(msg.longitude_deg)
             s.universal_gnss_status_alt = float(msg.altitude_m)
