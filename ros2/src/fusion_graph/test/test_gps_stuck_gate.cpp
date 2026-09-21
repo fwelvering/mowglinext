@@ -194,14 +194,16 @@ TEST(GpsStuckGate, HealthyReceiverWithPerSampleJitterNeverTrips)
 // t≈24s integrated a NET yaw past 170° by the end. abs_dtheta accumulates
 // |rate|*dt, so an accumulator that resets only on value-change (the bug)
 // sums EVERY inter-message rotation across the ENTIRE stuck period, not just
-// the turn itself — at ~5 Hz GPS publish, even a moderate turn accumulates
-// past a 60° stand-down budget within a couple of seconds if nothing ever
-// resets it, and once past it, it can only ever grow further while the value
-// stays stuck. The fix resets it every GPS message instead (one inter-fix
-// interval, matching rtk_wrongfix_gate.hpp), so a REALISTIC single-interval
-// rotation (a fast turn at 5 Hz is degrees, not tens of degrees, per
-// interval) never approaches the stand-down budget on its own, and detection
-// keeps firing continuously through the turn instead of going silent.
+// the turn itself — even a moderate turn accumulates past a 60° stand-down
+// budget within a couple of seconds if nothing ever resets it, and once past
+// it, it can only ever grow further while the value stays stuck. The fix
+// resets it every GPS message instead (one inter-fix interval, matching
+// rtk_wrongfix_gate.hpp), so a REALISTIC single-interval rotation (this
+// session's /gps/fix published at ~1 Hz — 46 distinct stamps over 44.95 s;
+// even at that comparatively low rate a fast turn is degrees, not tens of
+// degrees, per interval) never approaches the stand-down budget on its own,
+// and detection keeps firing continuously through the turn instead of going
+// silent.
 TEST(GpsStuckGate, CumulativeRotationOverStuckPeriodDoesNotDisableDetection)
 {
   const double lat = 53.089172501;
@@ -232,10 +234,11 @@ TEST(GpsStuckGate, CumulativeRotationOverStuckPeriodDoesNotDisableDetection)
     return stuck;
   };
 
-  // Straight driving crosses the distance threshold first (5 messages @
-  // 0.2 m each, well under the field's 2.7-4.5 m).
+  // Straight driving crosses the distance threshold first (6 messages @
+  // 0.2 m each = 1.2 m, strictly over the 1.0 m min_wheel_dist_m threshold;
+  // well under the field's 2.7-4.5 m).
   bool tripped_before_turn = false;
-  for (int i = 0; i < 5; ++i)
+  for (int i = 0; i < 6; ++i)
   {
     if (tick(0.2, 0.0))
     {
@@ -244,10 +247,12 @@ TEST(GpsStuckGate, CumulativeRotationOverStuckPeriodDoesNotDisableDetection)
   }
   EXPECT_TRUE(tripped_before_turn);
 
-  // ~171 deg net turn over 20 GPS messages (4 s @ 5 Hz) — the field
-  // magnitude — but spread per-message, matching how the accumulator is
-  // actually fed. 171/20 ≈ 8.6 deg per message, nowhere near the 60 deg
-  // stand-down budget for any SINGLE message.
+  // ~171 deg net turn over 20 GPS messages — the field magnitude — but
+  // spread per-message, matching how the accumulator is actually fed.
+  // 171/20 ≈ 8.6 deg per message, nowhere near the 60 deg stand-down
+  // budget for any SINGLE message (even at this session's field-confirmed
+  // ~1 Hz publish rate, a 20-message turn spans ~20 s, well within the
+  // ~23 s the field turn actually took).
   int stuck_count_during_turn = 0;
   for (int i = 0; i < 20; ++i)
   {
@@ -300,8 +305,9 @@ TEST(GpsStuckGate, ASingleViolentSingleMessageRotationStandsDownThatMessageOnly)
     return stuck;
   };
 
-  // Cross the distance threshold first.
-  for (int i = 0; i < 5; ++i)
+  // Cross the distance threshold first (6 x 0.2 m = 1.2 m, strictly over
+  // the 1.0 m min_wheel_dist_m threshold).
+  for (int i = 0; i < 6; ++i)
   {
     tick(0.2, 0.0);
   }
