@@ -26,13 +26,18 @@
 #include <utility>
 #include <vector>
 
+#include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/point32.hpp"
+#include "mowgli_behavior/blade_direction.hpp"
 #include "mowgli_behavior/cross_hatch.hpp"
+#include "mowgli_behavior/dig_skip.hpp"
 #include "mowgli_behavior/start_blocked_escape.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
+#include "mowgli_interfaces/srv/get_mowing_area.hpp"
+#include "mowgli_interfaces/srv/mower_control.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/buffer.hpp"
@@ -115,6 +120,39 @@ struct BTContext
   /// COMMAND_RESET_EMERGENCY=254, …).
   uint8_t current_command{0};
 
+  /// Blade policy is owned by the default MutuallyExclusive group: tick,
+  /// operator service and explicit start handlers. Direction resets only at
+  /// EndSession; operator inhibition also clears on an explicit mowing start.
+  bool blade_auto_reverse{false};
+  BladeDirection blade_direction;
+  // One DDS request writer preserves ordering between coverage, manual and
+  // operator blade requests. Access only from the owning callback group.
+  rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr blade_command_client;
+
+  rclcpp::Client<mowgli_interfaces::srv::MowerControl>::SharedPtr bladeClient()
+  {
+    if (!blade_command_client)
+      blade_command_client = node->create_client<mowgli_interfaces::srv::MowerControl>(
+          "/hardware_bridge/mower_control");
+    return blade_command_client;
+  }
+  // ONE get_mowing_area client for the lifetime of the context. A service
+  // client is only "ready" once ITS OWN request writer and response reader have
+  // matched the server's endpoints, which takes a discovery round-trip after
+  // create_client(). GetNextUnmowedArea used to create its client in the node
+  // instance, so every tree (re)build started with a client that reported "not
+  // available" until discovery caught up — a spurious FAILURE on the first tick,
+  // and the reason test_get_next_unmowed_area failed at random on loaded CI
+  // runners (three different tests in three runs, 2026-09-20).
+  rclcpp::Client<mowgli_interfaces::srv::GetMowingArea>::SharedPtr mowing_area_client;
+
+  rclcpp::Client<mowgli_interfaces::srv::GetMowingArea>::SharedPtr mowingAreaClient()
+  {
+    if (!mowing_area_client)
+      mowing_area_client = helper_node->create_client<mowgli_interfaces::srv::GetMowingArea>(
+          "/map_server_node/get_mowing_area");
+    return mowing_area_client;
+  }
   /// Operator-forced resume from a mid-session charge hold. Set by the
   /// ~/high_level_control handler when a COMMAND_START arrives while the tree
   /// is parked in a charge hold (last published state_name CHARGING or
@@ -254,6 +292,29 @@ struct BTContext
   /// seconds) so a pathological flap cannot re-dispatch the same area forever;
   /// past it the normal no-progress budget takes over and the area retires.
   static constexpr uint32_t kMaxGuardHaltedPasses = 200;
+
+  // -----------------------------------------------------------------------
+  // Fleet coordination (docs/MULTI_ROBOT.md)
+  // -----------------------------------------------------------------------
+  /// Areas that currently belong to ANOTHER fleet member (another robot is
+  /// mowing them, or finished them this fleet session). Written ONLY on the
+  /// tick thread from the deferred ~/set_fleet_assignment handling in
+  /// tickTree(), read by GetNextUnmowedArea (skipped like completed /
+  /// attempted areas) and by FollowStrip (a pass whose area becomes excluded
+  /// mid-mow yields). Deliberately NOT cleared by EndSession: the GUI fleet
+  /// coordinator owns its lifetime and sends an empty list when it stops.
+  std::set<uint32_t> fleet_excluded_areas;
+  /// Where the ascending area scan should START (it wraps to the lower
+  /// indices afterwards), so idle fleet members do not all race for area 0.
+  /// nullopt = plain ascending order. Ignored during a targeted run.
+  std::optional<uint32_t> fleet_preferred_start;
+  /// Areas whose most recent FollowStrip pass ended because the area became
+  /// excluded mid-mow (fleet yield, resume cursor saved). Consumed per area by
+  /// the next GetNextUnmowedArea dispatch of that area, which exempts the pass
+  /// from the no-progress budget exactly like a guard halt (bounded by
+  /// kMaxGuardHaltedPasses through area_guard_halt_count). Cleared by
+  /// EndSession and by ~/clear_coverage_resume.
+  std::set<uint32_t> fleet_yielded_areas;
 
   // -----------------------------------------------------------------------
   // Start-pose escape motion (issue #487, follow-up to the above)
@@ -446,6 +507,24 @@ struct BTContext
   /// charger.
   bool dig_escalated{false};
 
+  /// Dig points reported by /hardware_bridge/dig_event during THIS session
+  /// (map frame). FollowStrip skips every coverage pose within
+  /// dig_skip_radius_m of one (dig_skip.hpp) — the anti re-dig protection of
+  /// issue #500, which lives here instead of in the keepout mask so that it
+  /// can never block planning from the robot's own pose. Written by the
+  /// subscriber callback under context_mutex; cleared by EndSession.
+  std::vector<DigPoint> session_dig_points;
+  /// Monotonic count of dig events received since the node started. NOT reset
+  /// by EndSession: FollowStrip compares it with the value it last saw to
+  /// notice a dig that happened while its goal was active. Guarded by
+  /// context_mutex.
+  std::uint64_t dig_event_count{0};
+  /// Skip radius around a dig point [m]. Injected by full_system.launch.py
+  /// from robot_config_util.dig_skip_radius() (chassis circumscribed radius:
+  /// inside it some part of the body is over the hole); <= 0 disables the
+  /// skip zones. Set once at startup.
+  double dig_skip_radius_m{kDefaultDigSkipRadiusM};
+
   /// Set to true when the robot is outside all allowed polygons by more
   /// than lethal_boundary_margin_m. Escalates the BoundaryGuard from
   /// "try to navigate back inside" to "emergency stop + wait for
@@ -576,6 +655,18 @@ struct BTContext
   /// behavior_tree_node from the main tree's directory.
   std::string transit_tree_xml;
 
+  /// Goal-checker instance the coverage controller is dispatched with.
+  ///
+  /// Defaults to `coverage_goal_checker` — mowgli_nav2_plugins'
+  /// PathProgressGoalChecker, the only checker that survives a coverage path
+  /// whose start and end coincide (a closed headland ring): it requires the
+  /// robot to have tracked >= 95 % of the plan's poses before "reached" can
+  /// fire. ROS 2 Lyrical added a stock alternative, `coverage_axis_goal_checker`
+  /// (nav2_controller::AxisGoalChecker), which gates on the REMAINING length of
+  /// the transformed plan instead; it is configured in nav2_params_base.yaml and
+  /// selectable here for a field comparison. See docs/NAV2_LYRICAL_CONTROLLER_REVIEW.md.
+  std::string coverage_goal_checker_id{"coverage_goal_checker"};
+
   // -----------------------------------------------------------------------
   // Per-session flags reset by ClearCommand at session end
   // -----------------------------------------------------------------------
@@ -670,6 +761,11 @@ struct BTContext
   /// Transit goal to reach the coverage path start (populated by
   /// PlanCoverageArea, consumed by TransitToStrip).
   geometry_msgs::msg::PoseStamped current_transit_goal;
+  /// Where TransitToStrip last FAILED to take the robot (map frame), if it did.
+  /// FollowStrip consumes it to skip — not repeat — the identical transit to its
+  /// first unit (field 2026-09-21: 53 s in TransitToStrip, then 43 s more in
+  /// FollowStrip on the same unreachable start). BT-tick-thread only.
+  std::optional<geometry_msgs::msg::Point> transit_to_strip_failed_at;
 
   /// Latest coverage percentage.
   float coverage_percent{0.0f};
@@ -682,6 +778,18 @@ struct BTContext
   int total_swaths{0};
   int completed_swaths{0};
   int skipped_swaths{0};
+
+  /// True while FollowStrip is driving a blade-off transit between sub-paths
+  /// (its own transit_active_/transit_pending_ members, refreshed every tick
+  /// of onRunning() — see coverage_nodes.cpp), false otherwise. Reset in
+  /// onStart()/onHalted() so a stale true value can never survive past the
+  /// FollowStrip invocation that set it. Read by withLiveStatusFields
+  /// (status_snapshot.cpp) to fold "TRANSIT" into HighLevelStatus's
+  /// sub_state_name — a LIVE override of that otherwise tree-owned field,
+  /// because a transit begins/ends mid-FollowStrip, between tree ticks, so
+  /// only the live-field projection (not PublishHighLevelStatus, which does
+  /// not re-tick while FollowStrip runs) can track it accurately.
+  bool transiting{false};
 
   // -----------------------------------------------------------------------
   // High-level status publishing (shared publisher + last-published cache)

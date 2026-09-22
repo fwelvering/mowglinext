@@ -196,6 +196,7 @@ BT::NodeStatus EndSession::tick()
               ctx->undock_start_recorded ? "true" : "false",
               ctx->obstacle_backoff_count);
   ctx->yaw_seeded_this_session = false;
+  ctx->blade_direction.endSession();
   ctx->skipped_swaths = 0;
   ctx->undock_start_recorded = false;
   ctx->obstacle_backoff_count = 0;
@@ -223,6 +224,8 @@ BT::NodeStatus EndSession::tick()
   // pause that happened last session.
   ctx->guard_halted_reason.reset();
   ctx->area_guard_halt_count.clear();
+  // A fleet yield describes ONE pass of the session that just ended.
+  ctx->fleet_yielded_areas.clear();
   // SAFETY (issue #487 escape motion): disarm the escape and forget the
   // last-motion direction at the session boundary. A token or a direction that
   // survived into the next session would describe a pose the robot may no
@@ -231,6 +234,15 @@ BT::NodeStatus EndSession::tick()
   ctx->start_blocked_escape_armed = false;
   ctx->last_motion_valid = false;
   ctx->last_motion_cmd_vx = 0.0;
+  // Dig skip zones are SESSION state (dig_skip.hpp): a patch that made the
+  // wheels slip on wet grass today deserves another try next session, and the
+  // operator has the proposal in the GUI if it is a real hole. Written by a
+  // subscriber callback, hence the lock. dig_event_count is NOT reset — it is
+  // a monotonic edge counter, not session state.
+  {
+    std::lock_guard<std::mutex> lock(ctx->context_mutex);
+    ctx->session_dig_points.clear();
+  }
   // Swath-completion model (replaces the cell coverage grid): clear the
   // per-area completed-swath sets, swath counts, and the completed-area set so
   // the next COMMAND_START re-plans and re-mows every area from swath 0.

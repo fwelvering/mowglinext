@@ -2332,7 +2332,13 @@ const docTemplate = `{
                 "docking_pose": {
                     "$ref": "#/definitions/geometry.Pose"
                 },
+                "preserve_position": {
+                    "type": "boolean"
+                },
                 "use_gps_position": {
+                    "type": "boolean"
+                },
+                "use_pending_antenna": {
                     "type": "boolean"
                 },
                 "yaw_rad": {

@@ -77,7 +77,8 @@ REQUIRED_KEYS=(
   TFLUNA_EDGE_UART_DEVICE
   TFLUNA_EDGE_BAUD
   MOWGLI_ROS2_IMAGE
-  GPS_IMAGE
+  UNIVERSAL_GNSS_IMAGE
+  GNSS_DEVICE_GID
   LIDAR_IMAGE
   MAVROS_IMAGE
   GUI_IMAGE
@@ -188,7 +189,9 @@ if ! harness_run; then
 else
   feature_env="$(cat "$repo_feature/docker/.env")"
   assert_contains "custom IMAGE_TAG written" "IMAGE_TAG=feat-universal-gnss-integration" "$feature_env"
-  assert_contains "custom GPS image tag written" "GPS_IMAGE=ghcr.io/mowglinext/mowglinext/gps:feat-universal-gnss-integration" "$feature_env"
+  assert_contains "Universal GNSS image stays independent from IMAGE_TAG"     "UNIVERSAL_GNSS_IMAGE=ghcr.io/pepeuch/universal-gnss-ros2-lyrical:v0.7.1-rc3@sha256:4e7960132882f2f83fb2b1e7d1430b4dfd00081d4be15d7d8ab20dacf7f22bc5
+" "$feature_env"
+  assert_not_contains "legacy MowgliNext GPS_IMAGE is removed" "GPS_IMAGE=" "$feature_env"
   assert_contains "custom mowgli-ros2 image tag written" "MOWGLI_ROS2_IMAGE=ghcr.io/mowglinext/mowglinext/mowgli-ros2:feat-universal-gnss-integration" "$feature_env"
 fi
 
@@ -211,7 +214,7 @@ section ".env image references point at ghcr.io"
 
 # Every image var should be a ghcr.io path — guards against accidental
 # Docker Hub or local paths leaking into production .env.
-for img_var in MOWGLI_ROS2_IMAGE GPS_IMAGE LIDAR_IMAGE MAVROS_IMAGE GUI_IMAGE; do
+for img_var in MOWGLI_ROS2_IMAGE UNIVERSAL_GNSS_IMAGE LIDAR_IMAGE MAVROS_IMAGE GUI_IMAGE; do
   val="$(grep -E "^${img_var}=" "$ENV_FILE" | head -1 | cut -d= -f2-)"
   case "$val" in
     ghcr.io/*) pass "${img_var} is ghcr.io ($val)" ;;
