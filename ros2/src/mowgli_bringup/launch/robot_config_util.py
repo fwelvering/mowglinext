@@ -139,6 +139,27 @@ def chassis_circumscribed_radius(params, margin=CHASSIS_FOOTPRINT_MARGIN_M):
     return math.hypot(max(abs(front), abs(rear)), half_width)
 
 
+# full_system.launch.py's fallback for enforce_boundary_margin_m when neither the
+# installed config nor the template sets it.
+DEFAULT_ENFORCE_BOUNDARY_MARGIN_M = 0.40
+
+
+def boundary_soft_margin(params):
+    """Width of map_server's NON-LETHAL soft band outside every area [m].
+
+    = enforce_boundary_margin_m floored at the chassis circumscribed radius —
+    the same floor full_system.launch.py applies before handing the value to
+    map_server (the band must hold the whole footprint, which reaches that far
+    past the recorded line in some orientation). coverage_server receives it as
+    `boundary_soft_margin`: a PIVOT JOIN is only planned where the disc the body
+    sweeps pivoting about base_link stays inside the recorded line grown by
+    this band.
+    """
+    requested = float((params or {}).get(
+        "enforce_boundary_margin_m", DEFAULT_ENFORCE_BOUNDARY_MARGIN_M))
+    return max(requested, chassis_circumscribed_radius(params))
+
+
 # --- Obstacle margins: count the body EXACTLY ONCE per consumer --------------
 #
 # A drawn map obstacle is kept away from by three consumers, and each one has
@@ -193,6 +214,32 @@ def ftc_obstacle_clearance_margin(params):
         "obstacle_clearance_margin", DEFAULT_FTC_CLEARANCE_MARGIN_M))
     return min(FTC_CLEARANCE_MARGIN_MAX_M,
                max(FTC_CLEARANCE_MARGIN_MIN_M, requested))
+
+
+def global_inflation_radius(params, global_resolution=GLOBAL_COSTMAP_RESOLUTION_M):
+    """GLOBAL costmap inflation_radius: how far Smac feels a LiDAR obstacle.
+
+    SmacPlanner2D is a point planner. It REFUSES a cell only at cost >=
+    INSCRIBED, and that band is the footprint's inscribed radius (0.17 m on the
+    shipped chassis, rear edge) whatever inflation_radius says, so this value
+    does NOT widen what the planner refuses and cannot create a new "start
+    occupied". What it sets is the COST GRADIENT beyond that band, which
+    cost_travel_multiplier turns into berth. At the old 0.20 m the gradient
+    was 3 cm wide: past 0.20 m an obstacle cost nothing, Smac hugged it, and
+    RPP (which checks the real footprint) refused the path. Field 2026-09-21:
+    the transit to the first strip passed 0.2 m from a LiDAR obstacle, the body
+    (0.275 m half-width) overlapped it, RPP logged "collision ahead" 442 times
+    and the robot spent 97 s backing, spinning and waiting before the unit was
+    skipped. Replayed through the real planner on that bag: at this radius (with
+    cost_scaling_factor 7, nav2_params_base.yaml) the same transit keeps
+    >= 0.47 m between the body and the obstacle past its start.
+
+    = chassis circumscribed radius (the body's reach in any direction) + one
+    global cell. DERIVED: chassis dimensions are operator-editable. Applies to
+    sensor marks only: keepout_filter is listed AFTER inflation_layer, so the
+    keepout mask (which already carries the body) is never inflated.
+    """
+    return chassis_circumscribed_radius(params) + float(global_resolution)
 
 
 def keepout_raster_slack(global_resolution=GLOBAL_COSTMAP_RESOLUTION_M):
@@ -284,6 +331,72 @@ def dig_skip_radius(params):
     chassis over that hole" — a body-sized question.
     """
     return chassis_circumscribed_radius(params)
+
+
+DEFAULT_DIG_SENSITIVITY = "medium"
+
+# hardware_bridge wheel-slip dig detector presets (mowgli_hardware/dig_detector.hpp
+# + dig_escalation.hpp). ONE operator knob instead of five coupled numbers: what
+# counts as a dig depends on the ground — tall or wet grass and sandy soil make
+# a healthy robot slip far more than a short dry lawn does, and the detector
+# then stops, reverses and finally escalates to DIG_OBSTRUCTION on ground the
+# robot was in fact crossing.
+#
+#   window_s            sustained evidence needed before latching
+#   min_wheel_dist      worst-wheel travel the window must contain [m]
+#   progress_fraction   latch when observed travel < this fraction of it
+#   escalate_count      same-spot latches that stop the mission
+#
+# "medium" IS the compiled default of every one of those parameters
+# (test_robot_config_util.py pins that against hardware_bridge_node.cpp), so a
+# robot that never touches the knob behaves exactly as before it existed.
+# "low" still catches every dig on record (0.33-0.40 m of tyre for 0.01-0.03 m
+# of chassis in 1.2 s, i.e. under 10 % progress, sustained) but no longer
+# latches on a slipping pivot or a slow push through thick grass. "off" stops
+# the HOST detector only: the firmware anti-dig (blocked wheels) is untouched.
+DIG_SENSITIVITY_PRESETS = {
+    "off": {"enabled": False},
+    "low": {"enabled": True, "window_s": 2.5, "min_wheel_dist": 0.35,
+            "progress_fraction": 0.15, "escalate_count": 5},
+    "medium": {"enabled": True, "window_s": 1.2, "min_wheel_dist": 0.15,
+               "progress_fraction": 0.35, "escalate_count": 3},
+    "high": {"enabled": True, "window_s": 0.8, "min_wheel_dist": 0.10,
+             "progress_fraction": 0.50, "escalate_count": 3},
+}
+
+
+def resolve_dig_sensitivity(params):
+    """The configured dig_sensitivity level, normalised; unknown -> the default.
+
+    YAML 1.1 reads a bare `off` as boolean False (and `on` as True), so a
+    hand-edited `dig_sensitivity: off` must still mean "off" rather than fall
+    back to the default and silently keep the detector running.
+    """
+    raw = params.get("dig_sensitivity", DEFAULT_DIG_SENSITIVITY)
+    if raw is False:
+        return "off"
+    level = str(raw).strip().lower()
+    if level not in DIG_SENSITIVITY_PRESETS:
+        print(
+            f"[robot_config_util] WARNING: dig_sensitivity={raw!r} is not one of "
+            f"{sorted(DIG_SENSITIVITY_PRESETS)}; using {DEFAULT_DIG_SENSITIVITY!r}."
+        )
+        return DEFAULT_DIG_SENSITIVITY
+    return level
+
+
+def dig_detector_params(params):
+    """hardware_bridge parameters for the configured dig_sensitivity level."""
+    preset = DIG_SENSITIVITY_PRESETS[resolve_dig_sensitivity(params)]
+    if not preset["enabled"]:
+        return {"dig_detect_enabled": False}
+    return {
+        "dig_detect_enabled": True,
+        "dig_window_s": float(preset["window_s"]),
+        "dig_min_wheel_dist": float(preset["min_wheel_dist"]),
+        "dig_progress_fraction": float(preset["progress_fraction"]),
+        "dig_escalate_count": int(preset["escalate_count"]),
+    }
 
 
 DEFAULT_WHEEL_RADIUS_M = 0.10
