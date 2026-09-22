@@ -434,6 +434,27 @@ struct BTContext
   /// in place by every probe thereafter. Never cleared by EndSession — an id
   /// is a fact about the CURRENT area list, not per-session state.
   std::map<uint32_t, uint32_t> area_ids;
+  /// Live area-list generation, updated by a subscription to map_server's
+  /// ~/area_list_generation (transient_local — the topic, not a probe
+  /// response, so it is current by the time any BT tick runs regardless of
+  /// whether GetNextUnmowedArea has been ticking). map_server bumps it on
+  /// every successful ~/add_area — i.e. on every edit/delete/save, since the
+  /// GUI's rebuild flow re-adds every surviving area too.
+  uint64_t current_area_list_generation{0};
+  /// Per-index: current_area_list_generation as of the last time THIS index
+  /// was actually reconciled by a live probe (set alongside area_ids in
+  /// GetNextUnmowedArea::processResponse). GetNextUnmowedArea's synchronous
+  /// fast-skip path (onStart/advanceAndProbe skipping already-completed/
+  /// attempted indices without firing a probe) may only trust an index's
+  /// cached completed_areas/attempted_areas flag when this equals
+  /// current_area_list_generation — i.e. nothing has changed since this
+  /// index was last actually verified. An index with no entry here (never
+  /// probed this process) or a stale entry (probed, but the area list has
+  /// since been edited) always falls through to a real probe instead, which
+  /// re-populates both this and area_ids and runs the full id-reconciliation
+  /// in processResponse. Not persisted — a fresh boot starts empty, which is
+  /// safe: nothing is trusted as verified until actually probed again.
+  std::map<uint32_t, uint64_t> area_verified_generation;
   /// Filesystem path the coverage RESUME state (the four maps above +
   /// completed_areas + current_area) is persisted to, so an interrupted session
   /// survives a full process/container restart — not just the in-RAM BT

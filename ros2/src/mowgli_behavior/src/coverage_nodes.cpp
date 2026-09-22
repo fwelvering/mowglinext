@@ -2298,6 +2298,25 @@ void DetourAroundObstacle::onHalted()
 
 namespace
 {
+/// mowglinext#637 phase 2: may onStart()/advanceAndProbe()'s synchronous
+/// fast-skip path trust idx's cached skip status WITHOUT firing a live probe?
+/// Only when idx has actually been reconciled by a probe
+/// (area_verified_generation has an entry for it) at exactly the CURRENT
+/// area-list generation — i.e. nothing has edited/deleted/re-added the area
+/// list since. An index that has never been probed this process, or was
+/// probed before the generation last moved, is unsafe to trust: the area now
+/// AT that index may not be the one the cached flag describes. The caller
+/// must fall through to a real probe instead, which re-verifies via
+/// processResponse's id-reconciliation. This gate is deliberately reason-
+/// agnostic: it guards isSkippedArea() below regardless of WHY an index
+/// would be skipped (attempted/completed/fleet-excluded), since a stale
+/// cache is unsafe to trust for any of them.
+bool isSkipVerified(const BTContext& ctx, uint32_t idx)
+{
+  const auto it = ctx.area_verified_generation.find(idx);
+  return it != ctx.area_verified_generation.end() && it->second == ctx.current_area_list_generation;
+}
+
 /// An area GetNextUnmowedArea must not dispatch this pass: finished or retired
 /// this session, or currently assigned to another fleet member.
 bool isSkippedArea(const BTContext& ctx, uint32_t idx)
@@ -2431,8 +2450,18 @@ BT::NodeStatus GetNextUnmowedArea::onStart()
   // does NOT permanently disable the area. attempted_areas is cleared
   // by EndSession at session end. Areas assigned to another fleet member
   // (fleet_excluded_areas) are skipped the same way.
+  //
+  // mowglinext#637 phase 2: this synchronous skip is only taken when
+  // isSkipVerified() confirms the index was reconciled by a live probe at
+  // the CURRENT area-list generation — otherwise the GUI's edit/delete flow
+  // could have shifted a different, genuinely unmowed area onto this index
+  // since it was last probed, and skipping it here would never be corrected
+  // (no probe ever fires for it again this pass). An unverified index falls
+  // through the loop instead and gets a real probe below, which reconciles
+  // it via processResponse's id check.
   skipped_before_probe_ = 0;
-  while (current_area_idx_ < max_areas_ && isSkippedArea(*ctx, current_area_idx_))
+  while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
+         isSkippedArea(*ctx, current_area_idx_))
   {
     RCLCPP_INFO(ctx->node->get_logger(),
                 "GetNextUnmowedArea: area %u already %s this session, skipping",
@@ -2514,15 +2543,17 @@ BT::NodeStatus GetNextUnmowedArea::onRunning()
   return processResponse();
 }
 
-// Advance current_area_idx_ to the next index and fire its existence probe.
-// Returns RUNNING (probe in flight) or FAILURE (no candidate area remains).
-// Completed/attempted skipping is decided in processResponse, per-probe, not
-// here — see the mowglinext#637 phase 2 note in onStart().
+// Advance current_area_idx_ past any already-completed/attempted areas and
+// fire the next existence probe. Returns RUNNING (probe in flight) or FAILURE
+// (no candidate area remains). mowglinext#637 phase 2: the synchronous skip
+// is gated by isSkipVerified() for the same reason as onStart()'s — see the
+// comment there.
 BT::NodeStatus GetNextUnmowedArea::advanceAndProbe()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
   current_area_idx_++;
-  while (current_area_idx_ < max_areas_ && isSkippedArea(*ctx, current_area_idx_))
+  while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
+         isSkippedArea(*ctx, current_area_idx_))
   {
     current_area_idx_++;
   }
