@@ -196,6 +196,7 @@ BT::NodeStatus EndSession::tick()
               ctx->undock_start_recorded ? "true" : "false",
               ctx->obstacle_backoff_count);
   ctx->yaw_seeded_this_session = false;
+  ctx->blade_direction.endSession();
   ctx->skipped_swaths = 0;
   ctx->undock_start_recorded = false;
   ctx->obstacle_backoff_count = 0;
@@ -223,6 +224,8 @@ BT::NodeStatus EndSession::tick()
   // pause that happened last session.
   ctx->guard_halted_reason.reset();
   ctx->area_guard_halt_count.clear();
+  // A fleet yield describes ONE pass of the session that just ended.
+  ctx->fleet_yielded_areas.clear();
   // SAFETY (issue #487 escape motion): disarm the escape and forget the
   // last-motion direction at the session boundary. A token or a direction that
   // survived into the next session would describe a pose the robot may no
