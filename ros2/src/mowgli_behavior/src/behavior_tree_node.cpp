@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +30,7 @@
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "mowgli_behavior/action_nodes.hpp"
 #include "mowgli_behavior/battery_filter.hpp"
+#include "mowgli_behavior/blade_control_service.hpp"
 #include "mowgli_behavior/bt_context.hpp"
 #include "mowgli_behavior/condition_nodes.hpp"
 #include "mowgli_behavior/coverage_nodes.hpp"
@@ -41,12 +43,14 @@
 #include "mowgli_interfaces/gnss_observation_freshness.hpp"
 #include "mowgli_interfaces/gnss_status_utils.hpp"
 #include "mowgli_interfaces/msg/absolute_pose.hpp"
+#include "mowgli_interfaces/msg/coverage_session.hpp"
 #include "mowgli_interfaces/msg/dig_event.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/gnss_status.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
 #include "mowgli_interfaces/msg/status.hpp"
 #include "mowgli_interfaces/srv/high_level_control.hpp"
+#include "mowgli_interfaces/srv/set_fleet_assignment.hpp"
 #include "mowgli_interfaces/srv/start_in_area.hpp"
 #include "mowgli_interfaces/update_maintenance.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
@@ -57,6 +61,7 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/u_int64.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -164,6 +169,7 @@ public:
   }
 
 private:
+  friend struct BladeServiceTestPeer;
   // ------------------------------------------------------------------
   // ROS2 infrastructure
   // ------------------------------------------------------------------
@@ -600,6 +606,31 @@ private:
           updateLocalizationHealthLocked();
         });
 
+    // LocalizationGuard's position-payload freshness backstop (mowglinext#694):
+    // /gps/status staying live only proves the RECEIVER's own health/status
+    // feed is alive, not that the POSITION it reports is still updating —
+    // field-confirmed 2026-09-20, an RTK-Fixed receiver with a perfectly live
+    // /gps/status kept /gps/fix's lat/lon frozen for minutes. LocalizationMonitorNode
+    // (mowgli_localization) already computes the right answer for this from
+    // /gps/absolute_pose; reuse it here instead of re-deriving position
+    // freshness a second time. transient_local depth 1 to match the
+    // publisher (a "latched" mode topic), so a late-starting BT sees the
+    // current mode immediately rather than only the next transition.
+    localization_mode_sub_ =
+        create_subscription<std_msgs::msg::Int32>("/mowgli/localization/mode_id",
+                                                  rclcpp::QoS(1).transient_local(),
+                                                  [this](std_msgs::msg::Int32::ConstSharedPtr msg)
+                                                  {
+                                                    std::lock_guard<std::mutex> lock(
+                                                        context_->context_mutex);
+                                                    loc_obs_.position_mode_seen = true;
+                                                    // LocalizationMode::DEAD_RECKONING == 0
+                                                    // (mowgli_localization/localization_monitor_policy.hpp).
+                                                    loc_obs_.position_dead_reckoning =
+                                                        (msg->data == 0);
+                                                    updateLocalizationHealthLocked();
+                                                  });
+
     // collision_monitor state — used by IsObstacleStuck to detect when
     // the robot is wedged on an obstacle (PolygonStop active for ≥5 s).
     // Latched into BTContext so the condition tick is a pure read.
@@ -669,6 +700,7 @@ private:
 
   void setupServiceServer()
   {
+    blade_control_service_ = std::make_unique<BladeControlService>(*this, context_);
     coverage_orientation_service_ = std::make_unique<CoverageOrientationService>(*this, context_);
     using HighLevelControl = mowgli_interfaces::srv::HighLevelControl;
 
@@ -718,6 +750,11 @@ private:
                           "(battery %.1f %%)",
                           static_cast<double>(context_->battery_percent));
             }
+            // OFF must not survive an explicit new/resumed mow. Preserve the
+            // direction across pauses/recharge; do not call endSession here.
+            if (cmd == HighLevelControl::Request::COMMAND_START ||
+                cmd == HighLevelControl::Request::COMMAND_MANUAL_MOW)
+              context_->blade_direction.clearOperatorInhibit();
             context_->current_command = cmd;
             // A plain COMMAND_START means "mow the lawn", so it must cancel any
             // single-area clip still latched from an earlier ~/start_in_area run.
@@ -734,7 +771,9 @@ private:
             }
           }
           resp->success = true;
-        });
+        },
+        rclcpp::ServicesQoS(),
+        get_node_base_interface()->get_default_callback_group());
 
     RCLCPP_DEBUG(get_logger(), "~/high_level_control service server created");
 
@@ -759,10 +798,13 @@ private:
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             context_->target_area_index = static_cast<int>(req->area);
+            context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
           }
           resp->success = true;
-        });
+        },
+        rclcpp::ServicesQoS(),
+        get_node_base_interface()->get_default_callback_group());
 
     RCLCPP_DEBUG(get_logger(), "~/start_in_area service server created");
 
@@ -793,6 +835,36 @@ private:
           resp->success = true;
           resp->message = "coverage resume clear queued for the next behavior-tree tick";
         });
+
+    // ~/set_fleet_assignment: the GUI fleet coordinator tells this tree which
+    // areas belong to OTHER fleet members right now (docs/MULTI_ROBOT.md).
+    // Deferred to the tick thread for the same reason as
+    // ~/clear_coverage_resume: fleet_excluded_areas is read unlocked by
+    // GetNextUnmowedArea and FollowStrip on the tick thread.
+    using SetFleetAssignment = mowgli_interfaces::srv::SetFleetAssignment;
+    set_fleet_assignment_srv_ = create_service<SetFleetAssignment>(
+        "~/set_fleet_assignment",
+        [this](const SetFleetAssignment::Request::SharedPtr req,
+               SetFleetAssignment::Response::SharedPtr resp)
+        {
+          {
+            std::lock_guard<std::mutex> lock(fleet_assignment_mutex_);
+            pending_fleet_assignment_.excluded.assign(req->excluded_areas.begin(),
+                                                      req->excluded_areas.end());
+            pending_fleet_assignment_.preferred_start = req->preferred_start_index;
+            pending_fleet_assignment_.reason = req->reason;
+          }
+          fleet_assignment_requested_.store(true);
+          resp->success = true;
+          resp->message = "fleet assignment queued for the next behavior-tree tick";
+        });
+
+    // What this robot has finished / been told to leave alone this session —
+    // read by the fleet coordinator on every member's GUI, 1 Hz (see
+    // setupHighLevelStatusRepublish).
+    coverage_session_pub_ =
+        create_publisher<mowgli_interfaces::msg::CoverageSession>("~/coverage_session",
+                                                                  rclcpp::QoS(1).transient_local());
 
     // Latched signal the GUI reads to decide whether to offer "Resume vs Start
     // fresh". True when a prior session left recoverable progress.
@@ -876,7 +948,31 @@ private:
                                                  [this]()
                                                  {
                                                    republishHighLevelStatus();
+                                                   publishCoverageSession();
                                                  });
+  }
+
+  // 1 Hz snapshot of the per-session coverage sets for the fleet coordinator
+  // (docs/MULTI_ROBOT.md). The coverage sets are tick-thread state; this timer
+  // shares the node's MutuallyExclusive callback group with the tick, so the
+  // read is serialized against every writer (see bt_context.hpp).
+  void publishCoverageSession()
+  {
+    if (!coverage_session_pub_)
+    {
+      return;
+    }
+    mowgli_interfaces::msg::CoverageSession msg;
+    {
+      std::lock_guard<std::mutex> lock(context_->context_mutex);
+      msg.session_active = context_->current_command == 1;  // COMMAND_START
+    }
+    msg.current_area = static_cast<int16_t>(context_->current_area);
+    msg.completed_areas.assign(context_->completed_areas.begin(), context_->completed_areas.end());
+    msg.attempted_areas.assign(context_->attempted_areas.begin(), context_->attempted_areas.end());
+    msg.excluded_areas.assign(context_->fleet_excluded_areas.begin(),
+                              context_->fleet_excluded_areas.end());
+    coverage_session_pub_->publish(msg);
   }
 
   // Re-publish the last state identity with the LIVE context fields folded in.
@@ -1070,6 +1166,7 @@ private:
     // stomped the launch-injected values — the configured speeds never applied.
     context_->transit_speed = declare_parameter<double>("transit_speed", 0.2);
     context_->mowing_speed = declare_parameter<double>("mowing_speed", 0.2);
+    context_->blade_auto_reverse = declare_parameter<bool>("blade_auto_reverse", false);
 
     // Rain delay: parameter in minutes, blackboard in seconds.
     const double rain_delay_minutes = declare_parameter<double>("rain_delay_minutes", 30.0);
@@ -1211,11 +1308,13 @@ private:
                 "Behavior tree tick rate: %.1f Hz (%ld ms)",
                 tick_rate,
                 period.count());
-    tick_timer_ = create_wall_timer(period,
-                                    [this]()
-                                    {
-                                      tickTree();
-                                    });
+    tick_timer_ = create_wall_timer(
+        period,
+        [this]()
+        {
+          tickTree();
+        },
+        get_node_base_interface()->get_default_callback_group());
   }
 
   void tickTree()
@@ -1228,6 +1327,39 @@ private:
         context_->current_command = 8;  // COMMAND_STOP: hold position, never auto-resume.
       }
       updateLocalizationHealthLocked();
+    }
+
+    // Apply a pending fleet assignment on the tick thread (see the
+    // ~/set_fleet_assignment registration comment).
+    if (fleet_assignment_requested_.exchange(false))
+    {
+      FleetAssignment req;
+      {
+        std::lock_guard<std::mutex> lock(fleet_assignment_mutex_);
+        req = pending_fleet_assignment_;
+      }
+      std::set<uint32_t> excluded(req.excluded.begin(), req.excluded.end());
+      std::optional<uint32_t> preferred;
+      if (req.preferred_start >= 0)
+      {
+        preferred = static_cast<uint32_t>(req.preferred_start);
+      }
+      if (excluded != context_->fleet_excluded_areas ||
+          preferred != context_->fleet_preferred_start)
+      {
+        std::string list;
+        for (uint32_t idx : excluded)
+        {
+          list += (list.empty() ? "" : ",") + std::to_string(idx);
+        }
+        RCLCPP_INFO(get_logger(),
+                    "Fleet assignment applied: excluded areas [%s], preferred start %d (%s)",
+                    list.c_str(),
+                    req.preferred_start,
+                    req.reason.c_str());
+      }
+      context_->fleet_excluded_areas = std::move(excluded);
+      context_->fleet_preferred_start = preferred;
     }
 
     // Apply a pending "Start fresh" clear BEFORE ticking, on the tick thread —
@@ -1251,6 +1383,7 @@ private:
       context_->area_start_blocked_count.clear();
       context_->guard_halted_reason.reset();
       context_->area_guard_halt_count.clear();
+      context_->fleet_yielded_areas.clear();
       // Disarm the #487 escape motion too — see EndSession for why.
       context_->start_blocked_escape_armed = false;
       if (clearCoverageResumeState(*context_))
@@ -1289,6 +1422,7 @@ private:
   // ------------------------------------------------------------------
 
   std::shared_ptr<BTContext> context_;
+  std::unique_ptr<BladeControlService> blade_control_service_;
   std::unique_ptr<CoverageOrientationService> coverage_orientation_service_;
 
   // GPS-fixed debounce state (see the /gps callback): rides through the F9P
@@ -1327,6 +1461,7 @@ private:
       gnss_observation_freshness_;
   rclcpp::Subscription<mowgli_interfaces::msg::AbsolutePose>::SharedPtr gps_sub_;
   rclcpp::Subscription<mowgli_interfaces::msg::GnssStatus>::SharedPtr gnss_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr localization_mode_sub_;
   rclcpp::Subscription<nav2_msgs::msg::CollisionMonitorState>::SharedPtr collision_monitor_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_liveness_sub_;
 
@@ -1342,6 +1477,19 @@ private:
   // Set by the ~/clear_coverage_resume service, consumed by tickTree() so the
   // actual map clearing happens on the BT tick thread (see the service comment).
   std::atomic<bool> clear_resume_requested_{false};
+  // ~/set_fleet_assignment payload, handed to the tick thread through
+  // fleet_assignment_requested_ (same deferral as clear_resume_requested_).
+  struct FleetAssignment
+  {
+    std::vector<uint32_t> excluded;
+    int32_t preferred_start{-1};
+    std::string reason;
+  };
+  std::mutex fleet_assignment_mutex_;
+  FleetAssignment pending_fleet_assignment_;
+  std::atomic<bool> fleet_assignment_requested_{false};
+  rclcpp::Service<mowgli_interfaces::srv::SetFleetAssignment>::SharedPtr set_fleet_assignment_srv_;
+  rclcpp::Publisher<mowgli_interfaces::msg::CoverageSession>::SharedPtr coverage_session_pub_;
   // Only touched from this node's mutually-exclusive callback group (timer +
   // service + init), so plain bools would work today — atomic future-proofs
   // them against a Reentrant-group conversion, same rationale as the deferral.

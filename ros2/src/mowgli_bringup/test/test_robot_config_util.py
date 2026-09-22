@@ -670,6 +670,58 @@ def test_dig_proposal_radius_follows_the_configured_wheels():
     assert big_wheels > _util.dig_proposal_radius({})
 
 
+def test_boundary_soft_margin_is_floored_at_the_circumscribed_radius():
+    # enforce_boundary_margin_m is absent from the template: the 0.40 fallback
+    # is inside the shipped body's reach (0.597 m) and is raised to it, exactly
+    # as full_system.launch.py does for map_server.
+    assert _util.boundary_soft_margin({}) == pytest.approx(
+        _util.chassis_circumscribed_radius({}))
+    assert _util.boundary_soft_margin({"enforce_boundary_margin_m": 0.20}) == pytest.approx(
+        _util.chassis_circumscribed_radius({}))
+
+
+def test_boundary_soft_margin_keeps_a_wider_operator_band():
+    assert _util.boundary_soft_margin({"enforce_boundary_margin_m": 0.90}) == pytest.approx(0.90)
+
+
+def test_boundary_soft_margin_follows_an_operator_edited_chassis():
+    # A longer chassis reaches further past the line at a row end, so the band
+    # (and the pivot sweep check it bounds) must follow it — never a literal.
+    params = {"chassis_length": 0.90}
+    assert _util.boundary_soft_margin(params) == pytest.approx(
+        _util.chassis_circumscribed_radius(params))
+    assert _util.boundary_soft_margin(params) > _util.boundary_soft_margin({})
+
+
+def test_boundary_soft_margin_default_matches_full_system_fallback():
+    """coverage_server's pivot-join band (navigation.launch.py, via the helper)
+    and map_server's real band (full_system.launch.py, inline) must start from
+    the same fallback, or the planner would validate pivots against a band the
+    keepout mask does not paint. Source-level, like the tool_width guard above.
+    """
+    import ast
+
+    map_server_src = _MAP_SERVER_LAUNCH.read_text()
+    fallbacks = [
+        node.args[1].value
+        for node in ast.walk(ast.parse(map_server_src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and len(node.args) == 2
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "enforce_boundary_margin_m"
+        and isinstance(node.args[1], ast.Constant)
+    ]
+    assert fallbacks, "full_system.launch.py no longer reads enforce_boundary_margin_m"
+    for value in fallbacks:
+        assert value == pytest.approx(_util.DEFAULT_ENFORCE_BOUNDARY_MARGIN_M), (
+            "full_system.launch.py's enforce_boundary_margin_m fallback drifted from "
+            "robot_config_util.DEFAULT_ENFORCE_BOUNDARY_MARGIN_M"
+        )
+    assert "chassis_circumscribed_radius(robot_params)" in map_server_src
+
+
 def test_circumscribed_radius_encloses_every_footprint_corner():
     params = {"chassis_length": 0.72, "chassis_width": 0.51, "chassis_center_x": 0.22}
     front, rear, half_width = _util.chassis_footprint(params)
@@ -807,3 +859,89 @@ def test_chassis_half_width_tracks_the_configured_chassis() -> None:
     # A sparse config falls back to the shipped chassis, never to zero.
     assert _util.chassis_half_width({}) == pytest.approx(
         _util.DEFAULT_CHASSIS_WIDTH_M / 2.0 + _util.CHASSIS_FOOTPRINT_MARGIN_M)
+
+
+# ---------------------------------------------------------------------------
+# dig_sensitivity — one operator knob over the wheel-slip dig detector
+# ---------------------------------------------------------------------------
+_BRIDGE_YAML = _PKG_DIR / "config" / "hardware_bridge.yaml"
+_BRIDGE_LAUNCH = _LAUNCH_DIR / "mowgli.launch.py"
+
+
+def _bridge_yaml_params() -> dict:
+    with open(_BRIDGE_YAML, "r") as handle:
+        doc = yaml.safe_load(handle) or {}
+    (node_params,) = [v["ros__parameters"] for v in doc.values()
+                      if isinstance(v, dict) and "ros__parameters" in v]
+    return node_params
+
+
+def test_dig_sensitivity_medium_is_exactly_the_shipped_detector():
+    """The default level must not change a robot that never touches the knob."""
+    assert _template_params()["dig_sensitivity"] == "medium"
+    assert _util.DEFAULT_DIG_SENSITIVITY == "medium"
+    shipped = _bridge_yaml_params()
+    injected = _util.dig_detector_params({"dig_sensitivity": "medium"})
+    assert injected, "medium injects nothing"
+    for key, value in injected.items():
+        assert shipped[key] == value, f"{key}: medium={value} shipped={shipped[key]}"
+
+
+def test_dig_sensitivity_levels_are_ordered_from_tolerant_to_strict():
+    low, medium, high = (_util.dig_detector_params({"dig_sensitivity": level})
+                         for level in ("low", "medium", "high"))
+    # More evidence, more tyre travel and LESS observed progress before "low"
+    # calls it a dig; and more same-spot repeats before the mission stops.
+    assert low["dig_window_s"] > medium["dig_window_s"] > high["dig_window_s"]
+    assert low["dig_min_wheel_dist"] > medium["dig_min_wheel_dist"] > high["dig_min_wheel_dist"]
+    assert (low["dig_progress_fraction"] < medium["dig_progress_fraction"]
+            < high["dig_progress_fraction"])
+    assert low["dig_escalate_count"] > medium["dig_escalate_count"] >= high["dig_escalate_count"]
+
+
+@pytest.mark.parametrize("tyre_m, chassis_m, seconds", [
+    (0.40, 0.03, 1.2),   # 2026-09-18, straight dig while mowing
+    (0.33, 0.01, 1.2),   # 2026-09-04, differential spin, issue #527 comment
+    (0.189, 0.015, 1.2),  # stalled pure pivot (test_dig_detector.cpp)
+])
+def test_low_sensitivity_still_latches_every_dig_on_record(tyre_m, chassis_m, seconds):
+    """Sustained at the recorded rates, each field dig clears the "low" bar."""
+    low = _util.dig_detector_params({"dig_sensitivity": "low"})
+    scale = low["dig_window_s"] / seconds
+    assert tyre_m * scale >= low["dig_min_wheel_dist"]
+    assert chassis_m * scale < low["dig_progress_fraction"] * tyre_m * scale
+
+
+def test_dig_sensitivity_off_disables_only_the_host_detector():
+    assert _util.dig_detector_params({"dig_sensitivity": "off"}) == {"dig_detect_enabled": False}
+    # A hand-edited bare `off` is a YAML boolean; it must not fall back to the
+    # default and silently keep the detector running.
+    assert yaml.safe_load("dig_sensitivity: off") == {"dig_sensitivity": False}
+    assert _util.resolve_dig_sensitivity({"dig_sensitivity": False}) == "off"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (" LOW ", "low"), ("High", "high"), ("nonsense", "medium"), (True, "medium"), (3, "medium"),
+])
+def test_dig_sensitivity_is_normalised_and_unknown_values_fall_back(raw, expected):
+    assert _util.resolve_dig_sensitivity({"dig_sensitivity": raw}) == expected
+    assert _util.resolve_dig_sensitivity({}) == "medium"
+
+
+def test_dig_sensitivity_schema_matches_the_presets_and_default():
+    schema_path = _PKG_DIR.parents[2] / "gui" / "asserts" / "mower_config.schema.json"
+    prop = _find_schema_property(json.loads(schema_path.read_text()), "dig_sensitivity")
+    assert prop is not None
+    assert set(prop["enum"]) == set(_util.DIG_SENSITIVITY_PRESETS)
+    # The settings backend prunes a value equal to the schema default, so the
+    # two defaults must agree or choosing the template default is a no-op edit.
+    assert prop["default"] == _util.DEFAULT_DIG_SENSITIVITY
+
+
+def test_hardware_bridge_launch_injects_the_dig_sensitivity_preset():
+    """A template key no launch file injects is inert (ros2/CLAUDE.md)."""
+    source = _BRIDGE_LAUNCH.read_text()
+    assert "dig_detector_params(robot_params)" in source
+    # Injected AFTER the static params file, so the preset wins over it.
+    assert source.index("hardware_bridge_params,") < source.index(
+        "dig_detector_params(robot_params)")
