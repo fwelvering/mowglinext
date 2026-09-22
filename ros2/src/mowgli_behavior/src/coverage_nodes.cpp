@@ -2822,6 +2822,21 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
     return advanceAndProbe();
   }
 
+  // Assigned to another fleet member since it was last verified. Checked
+  // here, per-probe, for the same reason attempted_areas is above: the
+  // mowglinext#637 phase 2 isSkipVerified() gate means a never-probed index
+  // ALWAYS reaches this point for its first probe regardless of any
+  // pre-existing skip reason, so fleet exclusion needs its own re-check here
+  // too, exactly like attempted_areas does — the onStart/advanceAndProbe
+  // pre-filters only catch it once the cache is trusted.
+  if (ctx->fleet_excluded_areas.count(current_area_idx_) > 0)
+  {
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "GetNextUnmowedArea: area %u assigned to another fleet member, skipping",
+                current_area_idx_);
+    return advanceAndProbe();
+  }
+
   // Completion is now the swath-completion model: an area is done when
   // FollowStrip has mowed every swath F2C produced for it (recorded in
   // ctx->completed_areas). Reaching here normally means "has remaining work" —
