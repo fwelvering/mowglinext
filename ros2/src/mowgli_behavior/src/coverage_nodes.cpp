@@ -185,6 +185,13 @@ BT::NodeStatus FollowStrip::onStart()
   total_path_poses_ = 0;
   area_idx_ = (ctx->current_area >= 0) ? static_cast<uint32_t>(ctx->current_area) : 0u;
 
+  // Fleet coordination: the coordinator may have handed this area to another
+  // robot between GetNextUnmowedArea and now. Do not start a pass on it.
+  if (ctx->fleet_excluded_areas.count(area_idx_) > 0)
+  {
+    return yieldToFleet(ctx, /*mid_pass=*/false);
+  }
+
   // Build the drivable units. Prefer the hole-free, heading-continuous sub-paths;
   // bridge every boundary with a blade-off Nav2 transit. Fall back to full_path,
   // or to joining raw segments, if an older server provides no sub-paths.
@@ -430,6 +437,7 @@ BT::NodeStatus FollowStrip::onStart()
   // dispatched.
   truncated_at_.reset();
   unit_exhausted_by_dig_ = false;
+  unit_transit_already_failed_ = false;
   dig_recovery_active_ = false;
   dig_cancel_sent_ = false;
   dig_events_seen_ = snapshotDigs(ctx).event_count;
@@ -774,11 +782,30 @@ bool FollowStrip::sendCurrentSwath(const std::shared_ptr<BTContext>& ctx)
   // directly to FTC re-enables the blade before PRE_ROTATE and can dig in place.
   const double gap = distanceToSegmentStart(ctx);
   const bool unit_boundary = follow_goal_ever_sent_;
+  // TransitToStrip's failure is about the FIRST dispatch only: consume it here
+  // whichever way this dispatch goes.
+  std::optional<geometry_msgs::msg::Point> failed_transit;
+  if (!unit_boundary)
+  {
+    failed_transit = ctx->transit_to_strip_failed_at;
+    ctx->transit_to_strip_failed_at.reset();
+  }
   if (coverageTransitRequired(gap, unit_boundary))
   {
     // SAFETY: force the blade OFF first, unconditionally, before any dispatch or
     // early return below — nothing may cross this gap blade-on.
     setBladeEnabled(false);
+
+    // TransitToStrip has just failed to reach this very start. Sending the
+    // identical transit again only repeats the failure (field 2026-09-21: 53 s,
+    // then 43 s more on the same start). Skip the unit for this pass instead —
+    // the next onRunning tick books it; it stays un-mowed for a later pass.
+    const auto& start = swaths_[swath_idx_].poses.front().pose.position;
+    if (failed_transit && sameTransitTarget(failed_transit->x, failed_transit->y, start.x, start.y))
+    {
+      unit_transit_already_failed_ = true;
+      return true;
+    }
 
     // If navigate_to_pose isn't ready yet, do NOT fall through to a blade-on
     // FollowPath. Hold with the blade off and retry the transit each tick
@@ -952,6 +979,14 @@ BT::NodeStatus FollowStrip::onRunning()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
 
+  // Fleet coordination: two robots picked the same area and the coordinator's
+  // tie-break told this one to yield. Save the cursor and end the pass now;
+  // GetNextUnmowedArea skips the area while it stays excluded.
+  if (ctx->fleet_excluded_areas.count(area_idx_) > 0)
+  {
+    return yieldToFleet(ctx, /*mid_pass=*/true);
+  }
+
   // Advance to the next swath; finish (SUCCESS/FAILURE) when none remain.
   // A swath is SKIPPED on goal-reject/abort rather than failing the whole
   // area — robust coverage; gaps are reclaimed on the next pass, while FTC's
@@ -1085,6 +1120,20 @@ BT::NodeStatus FollowStrip::onRunning()
                 area_idx_);
     follow_handle_.reset();
     markCurrentUnitMowed(ctx);
+    return advance();
+  }
+
+  // TransitToStrip could not reach this unit's start (sendCurrentSwath): move
+  // on without repeating that transit. Not booked as mowed.
+  if (unit_transit_already_failed_)
+  {
+    unit_transit_already_failed_ = false;
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "FollowStrip: segment %zu/%zu — TransitToStrip could not reach its start; not "
+                "repeating that transit, moving on (it stays un-mowed for a later pass)",
+                swath_idx_ + 1,
+                swaths_.size());
+    ++swaths_skipped_;
     return advance();
   }
 
@@ -1471,6 +1520,31 @@ void FollowStrip::onHalted()
     updateProgress(ctx);
     persistResumeCursor(ctx);
   }
+  abortActiveGoals(ctx);
+}
+
+BT::NodeStatus FollowStrip::yieldToFleet(const std::shared_ptr<BTContext>& ctx, bool mid_pass)
+{
+  if (mid_pass && follow_handle_ && total_path_poses_ > 0)
+  {
+    updateProgress(ctx);
+    persistResumeCursor(ctx);
+  }
+  abortActiveGoals(ctx);
+  ctx->fleet_yielded_areas.insert(area_idx_);
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "FollowStrip: area %u is assigned to another fleet member — yielding %s "
+              "(resume cursor saved; this pass is not charged to the no-progress budget)",
+              area_idx_,
+              mid_pass ? "mid-pass" : "before starting");
+  // SUCCESS = "this pass is over", exactly like a pass that mowed what it
+  // could; completion is decided by completed_areas, not by this status, so
+  // the AreaLoop re-enters GetNextUnmowedArea, which skips the excluded area.
+  return BT::NodeStatus::SUCCESS;
+}
+
+void FollowStrip::abortActiveGoals(const std::shared_ptr<BTContext>& ctx)
+{
   if (follow_handle_)
   {
     try
@@ -1507,6 +1581,7 @@ void FollowStrip::onHalted()
   scan_pause_ = ScanPauseState{};
   truncated_at_.reset();
   unit_exhausted_by_dig_ = false;
+  unit_transit_already_failed_ = false;
   dig_recovery_active_ = false;
   dig_cancel_sent_ = false;
   setBladeEnabled(false);
@@ -1931,6 +2006,8 @@ bool FollowStrip::tryStartDetour(const std::shared_ptr<BTContext>& ctx)
 BT::NodeStatus TransitToStrip::onStart()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  // A new attempt: forget any earlier failure, whatever happens below.
+  ctx->transit_to_strip_failed_at.reset();
 
   // Nothing to transit to if there is no coverage path (e.g. the area is
   // already fully mowed → PlanCoverageArea returned an empty path with a
@@ -1961,23 +2038,57 @@ BT::NodeStatus TransitToStrip::onStart()
   goal.pose = ctx->current_transit_goal;
   goal.behavior_tree = ctx->transit_tree_xml;
 
+  // Bound this attempt — the same bound FollowStrip gives its own transits
+  // (transitDeadlineSec).
+  double gap_m = kTransitToStripUnknownGapM;
+  try
+  {
+    if (ctx->tf_buffer)
+    {
+      const auto tf = ctx->tf_buffer->lookupTransform("map", "base_footprint", tf2::TimePointZero);
+      gap_m = std::hypot(goal.pose.pose.position.x - tf.transform.translation.x,
+                         goal.pose.pose.position.y - tf.transform.translation.y);
+    }
+  }
+  catch (const tf2::TransformException&)
+  {
+    // Keep the generous unknown-position bound.
+  }
+  double timeout_s = -1.0;
+  getInput<double>("timeout_sec", timeout_s);
+  deadline_s_ = timeout_s > 0.0 ? timeout_s : transitDeadlineSec(gap_m);
+  start_time_ = std::chrono::steady_clock::now();
+  timeout_requested_ = false;
+  failure_seen_ = false;
+
   nav_handle_.reset();
   // Also ask for the result: a transit to a pose the robot already occupies
   // finishes in the same instant it is accepted, and its terminal status
   // message can be dropped before the client registers the handle
-  // (action_outcome.hpp).
+  // (action_outcome.hpp). It also carries nav2's error code (onFailed).
   nav_outcome_->Reset();
+  nav_result_ = std::make_shared<TransitResultSlot>();
   auto send_opts = rclcpp_action::Client<Nav2Navigate>::SendGoalOptions{};
-  send_opts.result_callback = [slot = nav_outcome_](const NavGoalHandle::WrappedResult& result)
+  send_opts.result_callback =
+      [slot = nav_outcome_, result_slot = nav_result_](const NavGoalHandle::WrappedResult& result)
   {
     slot->Record(OutcomeFromResultCode(result.code));
+    std::lock_guard<std::mutex> lk(result_slot->mutex);
+    result_slot->ready = true;
+    if (result.result)
+    {
+      result_slot->error_code = result.result->error_code;
+      result_slot->error_msg = result.result->error_msg;
+    }
   };
   nav_future_ = nav_client_->async_send_goal(goal, send_opts);
 
   RCLCPP_INFO(ctx->node->get_logger(),
-              "TransitToStrip: navigating to (%.2f, %.2f)",
+              "TransitToStrip: navigating to (%.2f, %.2f), %.1fm away, bound %.0fs",
               goal.pose.pose.position.x,
-              goal.pose.pose.position.y);
+              goal.pose.pose.position.y,
+              gap_m,
+              deadline_s_);
 
   return BT::NodeStatus::RUNNING;
 }
@@ -1989,7 +2100,16 @@ BT::NodeStatus TransitToStrip::onRunning()
   if (!nav_handle_)
   {
     if (nav_future_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
-      return BT::NodeStatus::RUNNING;
+    {
+      const double waited =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time_).count();
+      if (waited <= deadline_s_)
+        return BT::NodeStatus::RUNNING;
+      RCLCPP_WARN(ctx->node->get_logger(),
+                  "TransitToStrip: navigate_to_pose never answered the goal (%.0fs)",
+                  waited);
+      return BT::NodeStatus::FAILURE;
+    }
     nav_handle_ = nav_future_.get();
     if (!nav_handle_)
     {
@@ -2010,12 +2130,87 @@ BT::NodeStatus TransitToStrip::onRunning()
   if (status == action_msgs::msg::GoalStatus::STATUS_ABORTED ||
       status == action_msgs::msg::GoalStatus::STATUS_CANCELED)
   {
-    RCLCPP_WARN(ctx->node->get_logger(), "TransitToStrip: navigation failed");
-    nav_handle_.reset();
-    return BT::NodeStatus::FAILURE;
+    return onFailed(ctx);
   }
 
+  enforceDeadline(ctx);
   return BT::NodeStatus::RUNNING;
+}
+
+BT::NodeStatus TransitToStrip::onFailed(const std::shared_ptr<BTContext>& ctx)
+{
+  if (!failure_seen_)
+  {
+    failure_seen_ = true;
+    failure_time_ = std::chrono::steady_clock::now();
+  }
+  bool ready = false;
+  uint16_t code = 0;
+  std::string msg;
+  {
+    std::lock_guard<std::mutex> lk(nav_result_->mutex);
+    ready = nav_result_->ready;
+    code = nav_result_->error_code;
+    msg = nav_result_->error_msg;
+  }
+  const double waited =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - failure_time_).count();
+  if (!ready && waited < kTransitResultWaitSec)
+  {
+    return BT::NodeStatus::RUNNING;  // bounded wait for nav2's error code
+  }
+  nav_handle_.reset();
+
+  const TransitFailure kind = ready ? classifyTransitFailure(code, msg) : TransitFailure::kUnknown;
+  if (isStartPoseBlocked(kind))
+  {
+    // The robot's own pose is refused: FollowStrip's transit is refused the
+    // same way, instantly, and that is what arms the escape (issue #487).
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "TransitToStrip: refused — nav2 %s (code %u): \"%s\"; left to FollowStrip",
+                transitFailureName(kind),
+                static_cast<unsigned>(code),
+                msg.c_str());
+    return BT::NodeStatus::FAILURE;
+  }
+  // Anything else (controller refusing the path, the watchdog, ...) would only
+  // fail again, as slowly: FollowStrip skips this start for the pass instead.
+  ctx->transit_to_strip_failed_at = ctx->current_transit_goal.pose.position;
+  RCLCPP_WARN(ctx->node->get_logger(),
+              "TransitToStrip: failed — nav2 %s (code %u): \"%s\". FollowStrip will not repeat "
+              "this transit: it moves on to the next unit and this start is retried next pass",
+              transitFailureName(kind),
+              static_cast<unsigned>(code),
+              msg.c_str());
+  return BT::NodeStatus::FAILURE;
+}
+
+void TransitToStrip::enforceDeadline(const std::shared_ptr<BTContext>& ctx)
+{
+  if (timeout_requested_ || deadline_s_ <= 0.0)
+  {
+    return;
+  }
+  const double elapsed =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time_).count();
+  if (elapsed <= deadline_s_)
+  {
+    return;
+  }
+  // Cancel once; the CANCELED status then ends the node through onFailed.
+  timeout_requested_ = true;
+  RCLCPP_WARN(ctx->node->get_logger(),
+              "TransitToStrip: still running after %.0fs (bound %.0fs) — cancelling it",
+              elapsed,
+              deadline_s_);
+  try
+  {
+    nav_client_->async_cancel_goal(nav_handle_);
+  }
+  catch (const std::exception& ex)
+  {
+    RCLCPP_WARN(ctx->node->get_logger(), "TransitToStrip: cancel failed: %s", ex.what());
+  }
 }
 
 void TransitToStrip::onHalted()
@@ -2164,19 +2359,43 @@ void DetourAroundObstacle::onHalted()
 namespace
 {
 /// mowglinext#637 phase 2: may onStart()/advanceAndProbe()'s synchronous
-/// fast-skip path trust idx's cached completed_areas/attempted_areas flag
-/// WITHOUT firing a live probe? Only when idx has actually been reconciled
-/// by a probe (area_verified_generation has an entry for it) at exactly the
-/// CURRENT area-list generation — i.e. nothing has edited/deleted/re-added
-/// the area list since. An index that has never been probed this process,
-/// or was probed before the generation last moved, is unsafe to trust: the
-/// area now AT that index may not be the one the cached flag describes. The
-/// caller must fall through to a real probe instead, which re-verifies via
-/// processResponse's id-reconciliation.
+/// fast-skip path trust idx's cached skip status WITHOUT firing a live probe?
+/// Only when idx has actually been reconciled by a probe
+/// (area_verified_generation has an entry for it) at exactly the CURRENT
+/// area-list generation — i.e. nothing has edited/deleted/re-added the area
+/// list since. An index that has never been probed this process, or was
+/// probed before the generation last moved, is unsafe to trust: the area now
+/// AT that index may not be the one the cached flag describes. The caller
+/// must fall through to a real probe instead, which re-verifies via
+/// processResponse's id-reconciliation. This gate is deliberately reason-
+/// agnostic: it guards isSkippedArea() below regardless of WHY an index
+/// would be skipped (attempted/completed/fleet-excluded), since a stale
+/// cache is unsafe to trust for any of them.
 bool isSkipVerified(const BTContext& ctx, uint32_t idx)
 {
   const auto it = ctx.area_verified_generation.find(idx);
   return it != ctx.area_verified_generation.end() && it->second == ctx.current_area_list_generation;
+}
+
+/// An area GetNextUnmowedArea must not dispatch this pass: finished or retired
+/// this session, or currently assigned to another fleet member.
+bool isSkippedArea(const BTContext& ctx, uint32_t idx)
+{
+  return ctx.attempted_areas.count(idx) > 0 || ctx.completed_areas.count(idx) > 0 ||
+         ctx.fleet_excluded_areas.count(idx) > 0;
+}
+
+const char* skippedAreaReason(const BTContext& ctx, uint32_t idx)
+{
+  if (ctx.completed_areas.count(idx) > 0)
+  {
+    return "completed";
+  }
+  if (ctx.attempted_areas.count(idx) > 0)
+  {
+    return "attempted";
+  }
+  return "assigned to another fleet member";
 }
 }  // namespace
 
@@ -2270,13 +2489,32 @@ BT::NodeStatus GetNextUnmowedArea::onStart()
                 current_area_idx_);
   }
 
+  // Fleet rotation (docs/MULTI_ROBOT.md): start the scan where the coordinator
+  // asked, so idle fleet members do not all pick area 0, and wrap to the lower
+  // indices once the upper range is exhausted (see processResponse). A
+  // targeted run keeps its clip; an out-of-range preference is ignored.
+  fleet_wrap_pending_ = false;
+  fleet_wrap_limit_ = 0;
+  if (!ctx->single_area_target.has_value() && ctx->fleet_preferred_start.has_value() &&
+      *ctx->fleet_preferred_start > 0 && *ctx->fleet_preferred_start < max_areas_)
+  {
+    current_area_idx_ = *ctx->fleet_preferred_start;
+    fleet_wrap_pending_ = true;
+    fleet_wrap_limit_ = current_area_idx_;
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "GetNextUnmowedArea: fleet rotation — scanning from area %u first, then 0..%u",
+                current_area_idx_,
+                fleet_wrap_limit_ - 1);
+  }
+
   // Skip any area that has already burned its attempt budget this
   // session (BTContext::kMaxAreaAttempts dispatches of PlanCoverageArea
   // + FollowStrip). An area is added to attempted_areas only after
   // either completing successfully (strips_remaining == 0) or
   // exhausting its budget — so a single boundary-recovery preemption
   // does NOT permanently disable the area. attempted_areas is cleared
-  // by EndSession at session end.
+  // by EndSession at session end. Areas assigned to another fleet member
+  // (fleet_excluded_areas) are skipped the same way.
   //
   // mowglinext#637 phase 2: this synchronous skip is only taken when
   // isSkipVerified() confirms the index was reconciled by a live probe at
@@ -2286,15 +2524,16 @@ BT::NodeStatus GetNextUnmowedArea::onStart()
   // (no probe ever fires for it again this pass). An unverified index falls
   // through the loop instead and gets a real probe below, which reconciles
   // it via processResponse's id check.
+  skipped_before_probe_ = 0;
   while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
-         (ctx->attempted_areas.count(current_area_idx_) > 0 ||
-          ctx->completed_areas.count(current_area_idx_) > 0))
+         isSkippedArea(*ctx, current_area_idx_))
   {
     RCLCPP_INFO(ctx->node->get_logger(),
                 "GetNextUnmowedArea: area %u already %s this session, skipping",
                 current_area_idx_,
-                ctx->completed_areas.count(current_area_idx_) > 0 ? "completed" : "attempted");
+                skippedAreaReason(*ctx, current_area_idx_));
     current_area_idx_++;
+    skipped_before_probe_++;
   }
   if (current_area_idx_ >= max_areas_)
   {
@@ -2379,8 +2618,7 @@ BT::NodeStatus GetNextUnmowedArea::advanceAndProbe()
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
   current_area_idx_++;
   while (current_area_idx_ < max_areas_ && isSkipVerified(*ctx, current_area_idx_) &&
-         (ctx->attempted_areas.count(current_area_idx_) > 0 ||
-          ctx->completed_areas.count(current_area_idx_) > 0))
+         isSkippedArea(*ctx, current_area_idx_))
   {
     current_area_idx_++;
   }
@@ -2407,10 +2645,41 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   // stuck probe gets its own retries.
   probe_retries_ = 0;
 
+  if (!response->success && fleet_wrap_pending_)
+  {
+    // Fleet rotation: the upper range [preferred, N) is exhausted — wrap ONCE
+    // to [0, preferred). The clip on max_areas_ makes advanceAndProbe() end
+    // the run when that lower range is exhausted too.
+    fleet_wrap_pending_ = false;
+    max_areas_ = std::min(max_areas_, fleet_wrap_limit_);
+    current_area_idx_ = 0;
+    while (current_area_idx_ < max_areas_ && isSkippedArea(*ctx, current_area_idx_))
+    {
+      current_area_idx_++;
+      skipped_before_probe_++;
+    }
+    if (current_area_idx_ >= max_areas_)
+    {
+      RCLCPP_INFO(ctx->node->get_logger(),
+                  "GetNextUnmowedArea: all %u area(s) complete (fleet rotation wrapped)",
+                  areas_complete_);
+      ctx->coverage_all_complete = true;  // genuine completion → MOWING_COMPLETE
+      return BT::NodeStatus::FAILURE;
+    }
+    RCLCPP_INFO(ctx->node->get_logger(),
+                "GetNextUnmowedArea: fleet rotation wrapped — scanning 0..%u",
+                max_areas_ - 1);
+    auto request = std::make_shared<mowgli_interfaces::srv::GetMowingArea::Request>();
+    request->index = current_area_idx_;
+    pending_future_.emplace(client_->async_send_request(request));
+    call_start_ = std::chrono::steady_clock::now();
+    return BT::NodeStatus::RUNNING;
+  }
+
   if (!response->success)
   {
     // Index past the last defined area — nothing more to check.
-    if (areas_queried_ == 0)
+    if (areas_queried_ == 0 && skipped_before_probe_ == 0)
     {
       // No areas defined at all — a CONFIG error, not a normal completion.
       // Leave coverage_all_complete=false so this routes to the failure dock,
@@ -2620,8 +2889,16 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   // fault must PAUSE a mow, never fail it. Exempt it — bounded only by the
   // generous kMaxGuardHaltedPasses (a dead sensor is held by the guard itself;
   // this cap merely stops a pathological flap from re-dispatching forever).
-  const std::optional<std::string> guard_reason = ctx->guard_halted_reason;
+  std::optional<std::string> guard_reason = ctx->guard_halted_reason;
   ctx->guard_halted_reason.reset();  // consume: it describes ONE finished pass
+  // A fleet yield (FollowStrip ended its pass because the area was handed to
+  // another robot) is the same kind of interruption: the pass never had a
+  // chance to make progress, so it rides the guard-halt exemption. Consumed
+  // per area — it describes ONE finished pass of THIS area.
+  if (!guard_reason.has_value() && ctx->fleet_yielded_areas.erase(current_area_idx_) > 0)
+  {
+    guard_reason = "fleet_yield";
+  }
   if (guard_reason.has_value())
   {
     auto& halted_n = ctx->area_guard_halt_count[current_area_idx_];
