@@ -2751,22 +2751,28 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
 
   // Completion is now the swath-completion model: an area is done when
   // FollowStrip has mowed every swath F2C produced for it (recorded in
-  // ctx->completed_areas). The onStart/advance skip-loops already exclude
-  // completed_areas, so reaching here normally means "has remaining work" —
-  // but re-check in case it completed between probes. Unlocked (see the
-  // context_mutex doc comment in bt_context.hpp): this used to take
-  // context_mutex here and release it before calling advanceAndProbe()
-  // (itself locking), which is exactly the kind of nested-lock pattern that
-  // deadlocks a non-recursive mutex the moment someone "simplifies" the two
-  // scopes together — task #15 removed the lock instead of trying to keep
-  // that fragile in-out-in sequencing correct.
-  const bool already_complete = ctx->completed_areas.count(current_area_idx_) > 0;
-  if (already_complete)
+  // ctx->completed_areas), its attempt budget is exhausted (attempted_areas —
+  // completing ALSO adds to attempted_areas, so this subsumes that case too),
+  // or it is assigned to another fleet member (fleet_excluded_areas). The
+  // onStart/advance skip-loops already exclude all three via isSkippedArea(),
+  // but only once isSkipVerified() trusts the cache — a never-probed index
+  // (mowglinext#637 phase 2) always reaches here for its FIRST probe
+  // regardless of a pre-existing skip reason, so it must be re-checked here
+  // too, not just re-checked for "completed between probes" as before fleet
+  // coordination existed. Unlocked (see the context_mutex doc comment in
+  // bt_context.hpp): this used to take context_mutex here and release it
+  // before calling advanceAndProbe() (itself locking), which is exactly the
+  // kind of nested-lock pattern that deadlocks a non-recursive mutex the
+  // moment someone "simplifies" the two scopes together — task #15 removed
+  // the lock instead of trying to keep that fragile in-out-in sequencing
+  // correct.
+  if (isSkippedArea(*ctx, current_area_idx_))
   {
     areas_complete_++;
     RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextUnmowedArea: area %u already complete",
-                current_area_idx_);
+                "GetNextUnmowedArea: area %u already %s",
+                current_area_idx_,
+                skippedAreaReason(*ctx, current_area_idx_));
     return advanceAndProbe();
   }
 
