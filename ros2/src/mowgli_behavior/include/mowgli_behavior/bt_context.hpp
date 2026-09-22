@@ -498,7 +498,6 @@ struct BTContext
   /// in processResponse. Not persisted — a fresh boot starts empty, which is
   /// safe: nothing is trusted as verified until actually probed again.
   std::map<uint32_t, uint64_t> area_verified_generation;
-
   /// Filesystem path the coverage RESUME state (the four maps above +
   /// completed_areas + current_area) is persisted to, so an interrupted session
   /// survives a full process/container restart — not just the in-RAM BT
