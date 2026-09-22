@@ -23,15 +23,19 @@ services:
     # the updater (no installer run, no UNIVERSAL_GNSS_IMAGE in its .env) still
     # resolves an image. Must match install/lib/config.sh + install/deployment.json
     # (test_gnss_external_sidecar_contract.sh).
-    image: ${UNIVERSAL_GNSS_IMAGE:-ghcr.io/pepeuch/universal-gnss-ros2-lyrical:v0.1.4-rc2@sha256:24ea6c1c0553463207a4c33b803e920a974989f5891f2f107e8c35cce56f7a95}
+    image: ${UNIVERSAL_GNSS_IMAGE:-ghcr.io/pepeuch/universal-gnss-ros2-lyrical:v0.7.1-rc3@sha256:4e7960132882f2f83fb2b1e7d1430b4dfd00081d4be15d7d8ab20dacf7f22bc5}
     network_mode: host
     ipc: host
     environment:
       <<: *ros2-env
       UNIVERSAL_GNSS_CONFIGURATION_SCHEMA_VERSION: "1"
-      # Inside the log volume: that directory is owned by the image's runtime
-      # user, so no host directory has to be created and chowned beforehand.
-      UNIVERSAL_GNSS_EXPORT_DIR: /var/log/universal_gnss/export
+      # Logs and exports live in the tmpfs below, NOT in a volume: the host
+      # updater refuses a release that adds writable storage ("explicit
+      # data/layout migration required" — there is no backup contract for it),
+      # and nothing here needs to outlive the container. Node output already
+      # goes to stdout, i.e. the rotated json-file log.
+      ROS_LOG_DIR: /run/universal_gnss/log
+      UNIVERSAL_GNSS_EXPORT_DIR: /run/universal_gnss/export
     # mowgli_robot.yaml is the ONE GNSS configuration (receiver, serial port,
     # NTRIP), edited in the GUI. There is deliberately no derived parameters
     # file on the host and no GNSS_* variable in .env: both went stale the
@@ -42,12 +46,12 @@ services:
     volumes:
       - ./docker/config/mowgli:/config:ro
       - /dev:/dev
-      - universal_gnss_logs:/var/log/universal_gnss
       - ./docker/config/cyclonedds.xml:/cyclonedds.xml:ro
     tmpfs:
-      # Holds the generated ROS parameter file (NTRIP password inside): memory
-      # only, private to the runtime user, gone with the container.
-      - /run/universal_gnss:uid=1000,gid=1000,mode=0700
+      # Holds the generated ROS parameter file (NTRIP password inside), the
+      # launch logs and the exports: memory only, bounded, private to the
+      # runtime user, gone with the container.
+      - /run/universal_gnss:uid=1000,gid=1000,mode=0700,size=64m
     device_cgroup_rules:
       - "c 166:* rw"   # ttyACM*  (USB CDC receivers)
       - "c 188:* rw"   # ttyUSB*  (USB-serial adapters)
@@ -156,14 +160,49 @@ services:
             main()
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          if [ -f /run/universal_gnss/ntrip_enabled ]; then
-          /usr/local/bin/universal-gnss-healthcheck --timeout 2;
-          else timeout 4 ros2 service call /universal_gnss_receiver/get_health
-          std_srvs/srv/Trigger '{}' | grep -q 'success: true'; fi
+        - CMD
+        # Docker health probes do not inherit the entrypoint's ROS environment.
+        - /usr/local/bin/universal-gnss-entrypoint
+        - python3
+        - -c
+        - |
+          import pathlib
+          import sys
+          import rclpy
+          from std_srvs.srv import Trigger
+
+          def responsive(node, service):
+              client = node.create_client(Trigger, service)
+              try:
+                  if not client.wait_for_service(timeout_sec=2.0):
+                      return False
+                  future = client.call_async(Trigger.Request())
+                  rclpy.spin_until_future_complete(node, future, timeout_sec=2.0)
+                  return (future.done() and future.exception() is None
+                          and future.result() is not None and future.result().success)
+              finally:
+                  node.destroy_client(client)
+
+          def main():
+              services = ["/universal_gnss_receiver/get_health"]
+              if pathlib.Path("/run/universal_gnss/ntrip_enabled").exists():
+                  services.append("/universal_gnss_ntrip/get_health")
+              rclpy.init()
+              node = rclpy.create_node("mowgli_gnss_container_healthcheck")
+              try:
+                  for service in services:
+                      if not responsive(node, service):
+                          print("GNSS health check failed: " + service, file=sys.stderr)
+                          return 1
+                  return 0
+              finally:
+                  node.destroy_node()
+                  rclpy.shutdown()
+
+          if __name__ == "__main__":
+              sys.exit(main())
       interval: 30s
-      timeout: 5s
+      timeout: 12s
       start_period: 20s
       retries: 3
     restart: unless-stopped
@@ -172,6 +211,3 @@ services:
       options:
         max-file: "3"
         max-size: 5m
-
-volumes:
-  universal_gnss_logs:

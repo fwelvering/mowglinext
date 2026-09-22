@@ -16,6 +16,11 @@ mowgli:
     # Hardware / Physical
     # -----------------------------------------------------------------
     mower_model: "YardForce500"
+    # Robot identity. Shown in the GUI and used by the fleet view to tell
+    # several mowers apart (docs/MULTI_ROBOT.md). Choose a name that is unique
+    # within your fleet; the GUI onboarding wizard sets it. The generated
+    # robot_id (GUI DB, fleet.robot_id) is the stable key, so renaming is safe.
+    robot_name: "mowgli"
 
     # Chassis dimensions (metres) — physically measured on the actual
     # YardForce 500. Earlier the runtime YAML had 0.54 m which silently
@@ -399,6 +404,11 @@ mowgli:
     # (mowgli_hardware/blade_gate.hpp). Read at startup: takes effect on the
     # next ROS2 container restart.
     mowing_enabled: true
+    # Random blade direction once per BT mowing session (also manual mowing).
+    # Retained across pauses/transits/recharge; reselected after EndSession or
+    # ROS2 restart. Requires firmware with safe stopped reversal support and
+    # a blade assembly suitable for both directions. Read at ROS2 startup.
+    blade_auto_reverse: false
     mowing_speed: 0.2              # m/s during coverage paths (field-validated comfortable cut speed)
     transit_speed: 0.2             # m/s during point-to-point navigation (→ RPP max_linear_vel)
     # transit_dynamic_window: use Dynamic Window Pure Pursuit (DWPP, new in Nav2
@@ -1113,3 +1123,5 @@ mowgli:
     mqtt_topic_prefix: "mowgli"    # all topics are "<mqtt_topic_prefix>/<name>"
     mqtt_use_ssl: false            # TLS against the system CA store only (no
                                    # custom CA/client-cert param exists yet)
+    mqtt_home_assistant_discovery_enabled: false  # retained discovery under
+                                   # homeassistant/device/<derived-id>/config

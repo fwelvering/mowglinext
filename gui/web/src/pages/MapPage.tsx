@@ -612,8 +612,13 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             ...buildFeatures(m.working_area ?? [], "area"),
             ...buildFeatures(m.navigation_areas ?? [], "navigation"),
         };
-        const dockLonLat = transpose(offsetX, offsetY, datum, m.dock_y ?? 0, m.dock_x ?? 0);
-        newFeatures["dock"] = new DockFeatureBase(dockLonLat, m.dock_heading ?? 0);
+        // No dock fields = no dock feature: a missing dock is NOT a dock at
+        // (0, 0, 0) (#704). The restore path keeps the current dock instead.
+        if (m.dock_x === undefined || m.dock_y === undefined || m.dock_heading === undefined) {
+            return newFeatures;
+        }
+        const dockLonLat = transpose(offsetX, offsetY, datum, m.dock_y, m.dock_x);
+        newFeatures["dock"] = new DockFeatureBase(dockLonLat, m.dock_heading);
         return newFeatures;
     }
 
@@ -730,9 +735,11 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             highLevelStatus.highLevelStatus.state_name === "IDLE"
                 ? mowerAction("high_level_control", {Command: 1})
                 : mowerAction("high_level_control", {Command: 8}),
-        onBladeForward: mowerAction("mow_enabled", {mow_enabled: 1, mow_direction: 0}),
-        onBladeBackward: mowerAction("mow_enabled", {mow_enabled: 1, mow_direction: 1}),
-        onBladeOff: mowerAction("mow_enabled", {mow_enabled: 0, mow_direction: 0}),
+        // Retain explicit direction/OFF choices in the tree's session policy;
+        // direct hardware commands would be overwritten by its next tick.
+        onBladeForward: mowerAction("blade_control", {mow_enabled: 1, mow_direction: 0}),
+        onBladeBackward: mowerAction("blade_control", {mow_enabled: 1, mow_direction: 1}),
+        onBladeOff: mowerAction("blade_control", {mow_enabled: 0, mow_direction: 0}),
         onRecordFinish: mowerAction("high_level_control", {Command: 5}),
         onRecordCancel: mowerAction("high_level_control", {Command: 6}),
     }), [mowerAction, highLevelStatus.highLevelStatus.state_name]);
