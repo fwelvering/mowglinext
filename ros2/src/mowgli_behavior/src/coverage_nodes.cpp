@@ -23,6 +23,7 @@
 #include <limits>
 
 #include "action_msgs/msg/goal_status.hpp"
+#include "mowgli_behavior/cancel_goal.hpp"
 #include "mowgli_behavior/coverage_persistence.hpp"
 #include "mowgli_behavior/mow_coverage_plausibility.hpp"
 #include "mowgli_behavior/unit_resume.hpp"
@@ -2215,10 +2216,8 @@ void TransitToStrip::enforceDeadline(const std::shared_ptr<BTContext>& ctx)
 
 void TransitToStrip::onHalted()
 {
-  if (nav_handle_)
-  {
-    nav_client_->async_cancel_goal(nav_handle_);
-  }
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  cancelGoalQuietly(nav_client_, nav_handle_, ctx->node->get_logger(), "TransitToStrip");
   nav_handle_.reset();
 }
 
@@ -2345,10 +2344,8 @@ BT::NodeStatus DetourAroundObstacle::onRunning()
 
 void DetourAroundObstacle::onHalted()
 {
-  if (nav_handle_)
-  {
-    nav_client_->async_cancel_goal(nav_handle_);
-  }
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  cancelGoalQuietly(nav_client_, nav_handle_, ctx->node->get_logger(), "DetourAroundObstacle");
   nav_handle_.reset();
 }
 
@@ -3377,10 +3374,8 @@ BT::NodeStatus PlanCoverageArea::onRunning()
 
 void PlanCoverageArea::onHalted()
 {
-  if (goal_handle_ && action_client_)
-  {
-    action_client_->async_cancel_goal(goal_handle_);
-  }
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  cancelGoalQuietly(action_client_, goal_handle_, ctx->node->get_logger(), "PlanCoverageArea");
   goal_handle_.reset();
   srv_future_.reset();
 }
