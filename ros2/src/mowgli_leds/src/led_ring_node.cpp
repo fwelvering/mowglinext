@@ -263,9 +263,9 @@ LedInputs LedRingNode::collectInputs() const
     // state_name field -- see LedInputs::transiting's doc comment). Treat
     // all four the same way: the operator wants to know "is the blade
     // spinning right now", not which BT node currently owns the transit.
-    const std::string & state_name = latest_status_.state_name;
+    const std::string& state_name = latest_status_.state_name;
     in.transiting = latest_status_.sub_state_name == "TRANSIT" || state_name == "TRANSIT" ||
-        state_name == "UNDOCKING" || state_name == "RETURNING_HOME";
+                    state_name == "UNDOCKING" || state_name == "RETURNING_HOME";
   }
   else if (have_power_ && (now_s - power_time_s_) <= status_timeout_s_)
   {
