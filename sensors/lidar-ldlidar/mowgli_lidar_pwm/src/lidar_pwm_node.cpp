@@ -8,15 +8,14 @@
 // leaving IDLE on the motor actually being healthy. See pwm_controller.hpp
 // for the full design rationale (issue #569).
 
-#include "mowgli_lidar_pwm/pwm_controller.hpp"
-#include "mowgli_lidar_pwm/sysfs_pwm.hpp"
-
 #include <chrono>
 #include <memory>
 #include <mutex>
 
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/lidar_motor_status.hpp"
+#include "mowgli_lidar_pwm/pwm_controller.hpp"
+#include "mowgli_lidar_pwm/sysfs_pwm.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 
@@ -121,7 +120,7 @@ private:
     last_tick_ = n;
 
     const bool scan_fresh = last_scan_time_.nanoseconds() != 0 &&
-                             (n - last_scan_time_).seconds() <= scan_fresh_max_age_s_;
+      (n - last_scan_time_).seconds() <= scan_fresh_max_age_s_;
 
     const PwmCommand cmd = PwmControllerStep(cfg_, controller_state_, active_, scan_fresh, dt);
 
