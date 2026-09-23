@@ -27,10 +27,21 @@ services:
       <<: *ros2-env
     # No command override — image CMD (/start_lidar.sh) launches Myzhar's
     # ldrobot-lidar-ros2 lifecycle component via /ldlidar_scan.launch.py
-    # with fixed scan length from /ldlidar.yaml (hardcoded /dev/lidar @ 230400).
+    # with fixed scan length from /ldlidar.yaml (hardcoded /dev/lidar @ 230400),
+    # plus mowgli_lidar_pwm (issue #569), whose lidar_pwm_* settings
+    # start_lidar.sh resolves from the mounted mowgli_robot.yaml below —
+    # same source of truth as lidar_enabled (root CLAUDE.md Invariant 15),
+    # same mount sensors/gps already uses for its own config.
     volumes:
       - /dev:/dev
+      - ./docker/config/mowgli:/config:ro
       - ./docker/config/cyclonedds.xml:/cyclonedds.xml:ro
+      # PWM sysfs class root (NOT a specific pwmchipN — that subdirectory
+      # only exists once the operator has enabled the dtoverlay=pwm boot
+      # config step, per the lidar_pwm_gpio_pin settings description; the
+      # class root itself always exists on any kernel with PWM support, so
+      # mounting it is safe even when PWM control is disabled/unconfigured).
+      - /sys/class/pwm:/sys/class/pwm
     restart: unless-stopped
     logging:
       driver: json-file
