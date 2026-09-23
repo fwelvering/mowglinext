@@ -1,11 +1,14 @@
 // Copyright 2026 Mowgli Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "gtest/gtest.h"
 #include "mowgli_lidar_pwm/pwm_controller.hpp"
 
-#include <gtest/gtest.h>
-
-using namespace mowgli_lidar_pwm;
+using mowgli_lidar_pwm::PwmCommand;
+using mowgli_lidar_pwm::PwmControllerCfg;
+using mowgli_lidar_pwm::PwmControllerState;
+using mowgli_lidar_pwm::PwmControllerStep;
+using mowgli_lidar_pwm::PwmMotorState;
 
 namespace
 {
@@ -51,8 +54,7 @@ TEST(PwmController, SpinningUpSwitchesToRunDutyAfterHandshakeHold)
 
   PwmControllerStep(cfg, st, true, false, 0.01);  // enter SPINNING_UP
   PwmCommand cmd;
-  for (int i = 0; i < 20; ++i)  // 20 * 0.01 = 0.2s > handshake_hold_s (0.15)
-  {
+  for (int i = 0; i < 20; ++i) {  // 20 * 0.01 = 0.2s > handshake_hold_s (0.15)
     cmd = PwmControllerStep(cfg, st, true, false, 0.01);
   }
 
@@ -94,8 +96,7 @@ TEST(PwmController, SpinUpTimesOutToFaultWithoutAScan)
 
   PwmCommand cmd;
   // 25 * 0.1s = 2.5s > spinup_timeout_s (2.0s)
-  for (int i = 0; i < 25; ++i)
-  {
+  for (int i = 0; i < 25; ++i) {
     cmd = PwmControllerStep(cfg, st, true, false, 0.1);
   }
 
@@ -108,8 +109,7 @@ TEST(PwmController, FaultRecoversToRunningOnFreshScan)
   const auto cfg = TestCfg();
   PwmControllerState st;
 
-  for (int i = 0; i < 25; ++i)
-  {
+  for (int i = 0; i < 25; ++i) {
     PwmControllerStep(cfg, st, true, false, 0.1);
   }
   ASSERT_EQ(st.state, PwmMotorState::kFault);
@@ -132,8 +132,7 @@ TEST(PwmController, GoingInactiveFromRunningSpinsDownThenIdles)
   EXPECT_EQ(cmd.state, PwmMotorState::kSpinningDown);
   EXPECT_DOUBLE_EQ(cmd.duty_cycle, cfg.stop_duty);
 
-  for (int i = 0; i < 60; ++i)  // 60 * 0.01 = 0.6s > spindown_settle_s (0.5)
-  {
+  for (int i = 0; i < 60; ++i) {  // 60 * 0.01 = 0.6s > spindown_settle_s (0.5)
     cmd = PwmControllerStep(cfg, st, false, false, 0.01);
   }
   EXPECT_EQ(cmd.state, PwmMotorState::kIdle);

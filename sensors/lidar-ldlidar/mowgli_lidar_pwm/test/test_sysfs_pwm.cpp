@@ -4,18 +4,18 @@
 // Exercises the sysfs file-writing behaviour against a scratch directory
 // standing in for /sys/class/pwm — no real PWM hardware needed or assumed.
 
-#include "mowgli_lidar_pwm/sysfs_pwm.hpp"
-
-#include <gtest/gtest.h>
+#include <sys/stat.h>
 
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <sys/stat.h>
 
-using namespace mowgli_lidar_pwm;
+#include "gtest/gtest.h"
+#include "mowgli_lidar_pwm/sysfs_pwm.hpp"
+
+using mowgli_lidar_pwm::SysfsPwm;
 
 namespace
 {
@@ -23,15 +23,14 @@ namespace
 std::string MakeScratchDir()
 {
   char tmpl[] = "/tmp/mowgli_lidar_pwm_test_XXXXXX";
-  const char* dir = mkdtemp(tmpl);
-  if (dir == nullptr)
-  {
+  const char * dir = mkdtemp(tmpl);
+  if (dir == nullptr) {
     throw std::runtime_error("mkdtemp failed");
   }
   return std::string(dir);
 }
 
-std::string ReadFile(const std::string& path)
+std::string ReadFile(const std::string & path)
 {
   std::ifstream f(path);
   std::ostringstream ss;

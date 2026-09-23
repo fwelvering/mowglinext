@@ -44,10 +44,10 @@
 // datasheet's duty-cycle-to-speed mapping must be read during hardware
 // bring-up and these defaults tuned to match. Do not treat them as verified.
 
-#pragma once
+#ifndef MOWGLI_LIDAR_PWM__PWM_CONTROLLER_HPP_
+#define MOWGLI_LIDAR_PWM__PWM_CONTROLLER_HPP_
 
 #include <algorithm>
-#include <cmath>
 
 namespace mowgli_lidar_pwm
 {
@@ -98,10 +98,9 @@ struct PwmCommand
 
 namespace detail
 {
-inline void Enter(PwmControllerState& st, PwmMotorState next)
+inline void Enter(PwmControllerState & st, PwmMotorState next)
 {
-  if (st.state != next)
-  {
+  if (st.state != next) {
     st.state = next;
     st.time_in_state = 0.0;
   }
@@ -115,37 +114,30 @@ inline void Enter(PwmControllerState& st, PwmMotorState next)
 /// @param scan_fresh true when the caller has observed a recent /scan —
 ///                   supplied by the node's own subscription, not owned here
 /// @param dt         tick duration [s]
-inline PwmCommand PwmControllerStep(const PwmControllerCfg& cfg,
-                                     PwmControllerState& st,
-                                     bool active,
-                                     bool scan_fresh,
-                                     double dt)
+inline PwmCommand PwmControllerStep(
+  const PwmControllerCfg & cfg,
+  PwmControllerState & st,
+  bool active,
+  bool scan_fresh,
+  double dt)
 {
-  if (dt > 0.0)
-  {
+  if (dt > 0.0) {
     st.time_in_state += dt;
   }
 
-  switch (st.state)
-  {
+  switch (st.state) {
     case PwmMotorState::kIdle:
-      if (active)
-      {
+      if (active) {
         detail::Enter(st, PwmMotorState::kSpinningUp);
       }
       break;
 
     case PwmMotorState::kSpinningUp:
-      if (!active)
-      {
+      if (!active) {
         detail::Enter(st, PwmMotorState::kSpinningDown);
-      }
-      else if (scan_fresh)
-      {
+      } else if (scan_fresh) {
         detail::Enter(st, PwmMotorState::kRunning);
-      }
-      else if (st.time_in_state >= cfg.spinup_timeout_s)
-      {
+      } else if (st.time_in_state >= cfg.spinup_timeout_s) {
         detail::Enter(st, PwmMotorState::kFault);
       }
       break;
@@ -153,32 +145,25 @@ inline PwmCommand PwmControllerStep(const PwmControllerCfg& cfg,
     case PwmMotorState::kRunning:
       // Deliberately does not re-check scan_fresh here — see the class
       // comment. Only `active` going false ends this state.
-      if (!active)
-      {
+      if (!active) {
         detail::Enter(st, PwmMotorState::kSpinningDown);
       }
       break;
 
     case PwmMotorState::kSpinningDown:
-      if (active)
-      {
+      if (active) {
         // Changed its mind mid-spin-down — resume spinning up rather than
         // finish stopping and immediately having to start again.
         detail::Enter(st, PwmMotorState::kSpinningUp);
-      }
-      else if (st.time_in_state >= cfg.spindown_settle_s)
-      {
+      } else if (st.time_in_state >= cfg.spindown_settle_s) {
         detail::Enter(st, PwmMotorState::kIdle);
       }
       break;
 
     case PwmMotorState::kFault:
-      if (!active)
-      {
+      if (!active) {
         detail::Enter(st, PwmMotorState::kSpinningDown);
-      }
-      else if (scan_fresh)
-      {
+      } else if (scan_fresh) {
         // Recovered — a scan finally arrived (e.g. the vendor driver was
         // slow to come up, not a real motor fault).
         detail::Enter(st, PwmMotorState::kRunning);
@@ -188,8 +173,7 @@ inline PwmCommand PwmControllerStep(const PwmControllerCfg& cfg,
 
   PwmCommand cmd;
   cmd.state = st.state;
-  switch (st.state)
-  {
+  switch (st.state) {
     case PwmMotorState::kIdle:
       cmd.duty_cycle = cfg.stop_duty;
       break;
@@ -209,3 +193,5 @@ inline PwmCommand PwmControllerStep(const PwmControllerCfg& cfg,
 }
 
 }  // namespace mowgli_lidar_pwm
+
+#endif  // MOWGLI_LIDAR_PWM__PWM_CONTROLLER_HPP_

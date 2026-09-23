@@ -13,17 +13,18 @@
 // hardware (`ls /sys/class/pwm/`, per the lidar_pwm_gpio_pin settings
 // description) rather than assuming a value here.
 
-#pragma once
+#ifndef MOWGLI_LIDAR_PWM__SYSFS_PWM_HPP_
+#define MOWGLI_LIDAR_PWM__SYSFS_PWM_HPP_
+
+#include <sys/stat.h>
+#include <time.h>
 
 #include <cerrno>
-#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <string>
-#include <sys/stat.h>
-#include <time.h>
 
 namespace mowgli_lidar_pwm
 {
@@ -39,10 +40,10 @@ public:
   ///                   and never changed afterward — the LD19's documented
   ///                   30 kHz carrier is constant; only duty cycle varies.
   SysfsPwm(std::string base_path, int chip, int channel, std::int64_t period_ns)
-      : chip_dir_(base_path + "/pwmchip" + std::to_string(chip)),
-        pwm_dir_(chip_dir_ + "/pwm" + std::to_string(channel)),
-        channel_(channel),
-        period_ns_(period_ns)
+  : chip_dir_(base_path + "/pwmchip" + std::to_string(chip)),
+    pwm_dir_(chip_dir_ + "/pwm" + std::to_string(channel)),
+    channel_(channel),
+    period_ns_(period_ns)
   {
   }
 
@@ -51,18 +52,15 @@ public:
   /// treats that as a startup fault, not something to retry silently.
   void Open()
   {
-    if (!PathExists(pwm_dir_))
-    {
+    if (!PathExists(pwm_dir_)) {
       WriteFile(chip_dir_ + "/export", std::to_string(channel_));
       // The kernel creates pwmM asynchronously; a handful of retries covers
       // the normal case without an arbitrary fixed sleep.
-      for (int attempt = 0; attempt < 50 && !PathExists(pwm_dir_); ++attempt)
-      {
+      for (int attempt = 0; attempt < 50 && !PathExists(pwm_dir_); ++attempt) {
         struct timespec ts{0, 10'000'000};  // 10 ms
         nanosleep(&ts, nullptr);
       }
-      if (!PathExists(pwm_dir_))
-      {
+      if (!PathExists(pwm_dir_)) {
         throw std::runtime_error("pwm channel did not appear after export: " + pwm_dir_);
       }
     }
@@ -76,7 +74,7 @@ public:
   {
     EnsureOpen();
     const auto duty_ns =
-        static_cast<std::int64_t>(static_cast<double>(period_ns_) * duty_cycle_fraction);
+      static_cast<std::int64_t>(static_cast<double>(period_ns_) * duty_cycle_fraction);
     WriteFile(pwm_dir_ + "/duty_cycle", std::to_string(duty_ns));
   }
 
@@ -90,23 +88,16 @@ public:
   /// shutdown paths where a failure has nothing useful left to do about it.
   void Close() noexcept
   {
-    if (!opened_)
-    {
+    if (!opened_) {
       return;
     }
-    try
-    {
+    try {
       WriteFile(pwm_dir_ + "/enable", "0");
+    } catch (...) {
     }
-    catch (...)
-    {
-    }
-    try
-    {
+    try {
       WriteFile(chip_dir_ + "/unexport", std::to_string(channel_));
-    }
-    catch (...)
-    {
+    } catch (...) {
     }
     opened_ = false;
   }
@@ -116,34 +107,31 @@ public:
     Close();
   }
 
-  SysfsPwm(const SysfsPwm&) = delete;
-  SysfsPwm& operator=(const SysfsPwm&) = delete;
+  SysfsPwm(const SysfsPwm &) = delete;
+  SysfsPwm & operator=(const SysfsPwm &) = delete;
 
 private:
   void EnsureOpen()
   {
-    if (!opened_)
-    {
+    if (!opened_) {
       throw std::logic_error("SysfsPwm used before Open()");
     }
   }
 
-  static bool PathExists(const std::string& path)
+  static bool PathExists(const std::string & path)
   {
     struct stat st{};
     return ::stat(path.c_str(), &st) == 0;
   }
 
-  static void WriteFile(const std::string& path, const std::string& value)
+  static void WriteFile(const std::string & path, const std::string & value)
   {
     std::ofstream f(path);
-    if (!f.is_open())
-    {
+    if (!f.is_open()) {
       throw std::runtime_error("failed to open " + path + ": " + std::strerror(errno));
     }
     f << value;
-    if (!f.good())
-    {
+    if (!f.good()) {
       throw std::runtime_error("failed to write " + value + " to " + path);
     }
   }
@@ -156,3 +144,5 @@ private:
 };
 
 }  // namespace mowgli_lidar_pwm
+
+#endif  // MOWGLI_LIDAR_PWM__SYSFS_PWM_HPP_
