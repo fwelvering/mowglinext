@@ -36,12 +36,18 @@ services:
       - /dev:/dev
       - ./docker/config/mowgli:/config:ro
       - ./docker/config/cyclonedds.xml:/cyclonedds.xml:ro
-      # PWM sysfs class root (NOT a specific pwmchipN — that subdirectory
-      # only exists once the operator has enabled the dtoverlay=pwm boot
-      # config step, per the lidar_pwm_gpio_pin settings description; the
-      # class root itself always exists on any kernel with PWM support, so
-      # mounting it is safe even when PWM control is disabled/unconfigured).
-      - /sys/class/pwm:/sys/class/pwm
+    # No explicit /sys/class/pwm mount for mowgli_lidar_pwm (issue #569): unlike
+    # a bind-mounted directory of real files, sysfs is a live kernel API
+    # surface, not persistent data, so `privileged: true` above is already
+    # sufficient — Docker gives a privileged container its own read-write
+    # sysfs mount, which for a non-namespaced class like /sys/class/pwm shows
+    # and affects the SAME host kernel objects a host bind-mount would. An
+    # earlier revision added an explicit `/sys/class/pwm:/sys/class/pwm` line
+    # anyway, which the host updater's validateStackMounts (gui/pkg/updater/
+    # stack.go) correctly treats as a brand-new writable mount requiring an
+    # explicit data/layout migration on every robot that hasn't manually
+    # added it before — since there is no data behind it to migrate, the
+    # right fix is to not declare the mount at all, not to justify one.
     restart: unless-stopped
     logging:
       driver: json-file
