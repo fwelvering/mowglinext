@@ -343,9 +343,9 @@ TEST(GuardFallthroughTest, PausingGuardsMarkTheHaltFirst)
 
   for (const auto& [guard, reason] :
        std::vector<std::pair<std::string, std::string>>{{"SensorSafetyGuard", "scan_stale"},
-                                                          {"LocalizationGuard",
-                                                           "localization_degraded"},
-                                                          {"RainGuard", "rain"}})
+                                                        {"LocalizationGuard",
+                                                         "localization_degraded"},
+                                                        {"RainGuard", "rain"}})
   {
     const std::string block = ExtractGuardBlock(xml, guard);
     ASSERT_FALSE(block.empty()) << "Guard not found in main_tree.xml: " << guard;
