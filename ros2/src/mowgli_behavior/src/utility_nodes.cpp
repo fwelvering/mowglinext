@@ -14,6 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "mowgli_behavior/utility_nodes.hpp"
+
 #include "mowgli_interfaces/msg/lidar_motor_status.hpp"
 
 namespace mowgli_behavior
