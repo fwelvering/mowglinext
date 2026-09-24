@@ -56,6 +56,7 @@
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav2_msgs/action/undock_robot.hpp"
 #include "nav2_msgs/msg/collision_monitor_state.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
@@ -325,6 +326,20 @@ private:
                                                      context_->current_area_list_generation =
                                                          msg->data;
                                                    });
+
+    // FollowStrip's end-of-pass coverage-plausibility cross-check (issue
+    // #680) — see BTContext::latest_mow_progress's doc comment. transient_local
+    // depth 1 to match the publisher (map_server_node ~/mow_progress), so a
+    // sample is available even if the first area finishes its pass before a
+    // fresh publish tick.
+    mow_progress_sub_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
+        "/map_server_node/mow_progress",
+        rclcpp::QoS(1).transient_local(),
+        [this](nav_msgs::msg::OccupancyGrid::ConstSharedPtr msg)
+        {
+          std::lock_guard<std::mutex> lock(context_->context_mutex);
+          context_->latest_mow_progress = *msg;
+        });
 
     // Repeat-dig escalation feed for DigObstructionGuard. The bridge latches
     // this after dig_escalate_count dig latches inside dig_escalate_radius_m
@@ -765,7 +780,16 @@ private:
             // Safe to do here: the GUI's "mow this area" button calls
             // ~/start_in_area, which sets current_command itself and never
             // reaches this handler, so this cannot cancel a targeted request.
-            if (cmd == HighLevelControl::Request::COMMAND_START)
+            //
+            // EXCEPTION: not while parked in StopHoldSequence's IDLE
+            // (isResumableHoldState) — that is the operator's own "Pause" on a
+            // run still in progress, and pressing Resume/Start again must
+            // continue that SAME targeted area, not silently widen to the
+            // whole lawn. The charge-hold/emergency scenario above is
+            // unaffected: it publishes CHARGING/CRITICAL_BATTERY_CHARGING (or,
+            // once EndSession has run, IDLE_DOCKED), never plain IDLE.
+            if (cmd == HighLevelControl::Request::COMMAND_START &&
+                !isResumableHoldState(context_->last_high_level_status.state_name))
             {
               clearSingleAreaMode(*context_);
             }
@@ -1376,6 +1400,7 @@ private:
       context_->area_plan_fingerprint.clear();
       context_->completed_areas.clear();
       context_->attempted_areas.clear();
+      context_->incomplete_retired_areas.clear();
       context_->area_attempt_count.clear();
       context_->area_last_coverage.clear();
       context_->coverage_start_blocked = false;
@@ -1452,6 +1477,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr dig_escalated_sub_;
   rclcpp::Subscription<mowgli_interfaces::msg::DigEvent>::SharedPtr dig_event_sub_;
   rclcpp::Subscription<std_msgs::msg::UInt64>::SharedPtr area_list_generation_sub_;
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr mow_progress_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr fused_odom_sub_;
   // LocalizationGuard state. Both feeds write loc_obs_ under
   // context_->context_mutex and then call updateLocalizationHealthLocked().
