@@ -55,8 +55,8 @@
 
 using mowgli_behavior::BTContext;
 using mowgli_behavior::IsBatteryAbove;
-using mowgli_behavior::isChargeHoldState;
 using mowgli_behavior::IsChargeCurrentBelow;
+using mowgli_behavior::isChargeHoldState;
 using mowgli_behavior::IsManualResumeRequested;
 using mowgli_behavior::isResumableHoldState;
 
@@ -489,8 +489,8 @@ TEST(ManualResumeTreeTest, BothChargeWaitLoopsCarryTheManualResumeExit)
     ASSERT_FALSE(block.empty()) << loop << " not found in main_tree.xml.";
 
     const std::size_t above_at = block.find("<IsBatteryAbove threshold=\"{battery_full_pct}\"/>");
-    const std::size_t tapered_at = block.find(
-        "<IsChargeCurrentBelow threshold=\"{battery_charge_tail_current_a}\"/>");
+    const std::size_t tapered_at =
+        block.find("<IsChargeCurrentBelow threshold=\"{battery_charge_tail_current_a}\"/>");
     const std::size_t manual_at =
         block.find("<IsManualResumeRequested min_battery_pct=\"{battery_manual_resume_pct}\"/>");
     const std::size_t wait_at = block.find("<WaitForDuration");
