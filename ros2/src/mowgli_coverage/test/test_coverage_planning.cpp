@@ -828,7 +828,9 @@ TEST(CoverageContinuousPath, RingToRingJoinsDoNotLoop)
     return best;
   };
   auto heading = [](const std::pair<double, double>& a, const std::pair<double, double>& b)
-  { return std::atan2(b.second - a.second, b.first - a.first); };
+  {
+    return std::atan2(b.second - a.second, b.first - a.first);
+  };
   auto turnDeg = [](double h_in, double h_out)
   {
     double d = h_out - h_in;
@@ -856,8 +858,7 @@ TEST(CoverageContinuousPath, RingToRingJoinsDoNotLoop)
       {
         in_connector = true;
         cum_turn = 0.0;
-        run_started_on_ring =
-            distToRingPrims(path[i - 1].first, path[i - 1].second) <= kOnRingTolM;
+        run_started_on_ring = distToRingPrims(path[i - 1].first, path[i - 1].second) <= kOnRingTolM;
       }
       // Accumulate the turn AT this point before checking whether the run
       // just closed, so the closing turn (off-ring segment -> the re-entry
