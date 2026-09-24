@@ -205,7 +205,7 @@ BT::NodeStatus IsChargeCurrentBelow::tick()
   }
 
   return ctx->latest_power.charge_current <= threshold ? BT::NodeStatus::SUCCESS
-                                                        : BT::NodeStatus::FAILURE;
+                                                       : BT::NodeStatus::FAILURE;
 }
 
 // ---------------------------------------------------------------------------
