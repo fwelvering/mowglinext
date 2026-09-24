@@ -442,7 +442,9 @@ TEST(CriticalBatteryResumeStructureTest, StopGatesArePostDockReactiveHoldsBefore
   EXPECT_LT(stop_gate, wait);
   EXPECT_LT(wait, undock);
 
-  const auto low_dock = tree.find("<Sequence name=\"BatteryDockAndResume\">");
+  // #765 renamed the BatteryGuard handler BatteryDockAndResume ->
+  // BatteryGuardHandler, matching RainGuardHandler / SensorFaultHandler.
+  const auto low_dock = tree.find("<Sequence name=\"BatteryGuardHandler\">");
   const auto low_dock_action = tree.find("<DockRobot", low_dock);
   const auto low_reactive_hold = tree.find("<ReactiveSequence name=\"ChargeHold\">", low_dock);
   const auto low_stop_gate = tree.find("ChargeHoldNotStopped", low_dock);
