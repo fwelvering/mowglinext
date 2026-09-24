@@ -50,15 +50,19 @@
 
 #include "behaviortree_cpp/bt_factory.h"
 #include "mowgli_behavior/bt_context.hpp"
+#include "mowgli_behavior/charge_progress.hpp"
 #include "mowgli_behavior/condition_nodes.hpp"
 #include <gtest/gtest.h>
 
 using mowgli_behavior::BTContext;
+using mowgli_behavior::ChargeProgress;
 using mowgli_behavior::IsBatteryAbove;
 using mowgli_behavior::IsChargeCurrentBelow;
 using mowgli_behavior::isChargeHoldState;
 using mowgli_behavior::IsManualResumeRequested;
 using mowgli_behavior::isResumableHoldState;
+using mowgli_behavior::judgeChargeProgress;
+using mowgli_behavior::kNoChargeSaturationPct;
 
 namespace
 {
@@ -553,4 +557,85 @@ TEST(ManualResumeTreeTest, ManualChargeGuardIsNotAManualResumeLoop)
   const std::string block = ExtractNamedFallback(ReadMainTree(), "ManualChargeGuard");
   ASSERT_FALSE(block.empty());
   EXPECT_EQ(block.find("IsManualResumeRequested"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// IsChargingProgressing on a saturated pack (charge_progress.hpp)
+// ---------------------------------------------------------------------------
+//
+// The charge loops now wait for IsChargeCurrentBelow, i.e. through the
+// charger's CV tail, where battery_percent — derived from pack voltage, held at
+// the charge setpoint — is flat by construction. IsChargingProgressing demands
+// a 1 % rise per 30 min window. Without the saturation exemption a CV tail
+// longer than one window is read as a dead charger: CHARGER_FAILED, and the
+// session ends on the dock instead of resuming the mow.
+
+namespace
+{
+constexpr double kProgressWindowS = 1800.0;  // IsChargingProgressing's window
+constexpr float kProgressMinRisePct = 1.0f;  // its required rise per window
+constexpr float kProgressFullPct = 95.0f;  // battery_full_pct template default
+}  // namespace
+
+TEST(ChargeProgressTest, AFlatSaturatedPackInTheCvTailIsNotAStall)
+{
+  // Pinned at the voltage-derived ceiling for 45 min while the current tapers.
+  EXPECT_EQ(judgeChargeProgress(
+                100.0f, 100.0f, 45 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kSaturated);
+  // Exactly at the resume level counts as saturated too.
+  EXPECT_EQ(judgeChargeProgress(
+                95.0f, 95.0f, 45 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kSaturated);
+}
+
+TEST(ChargeProgressTest, AFlatPackBelowFullIsStillADeadCharger)
+{
+  // The case the stall rule exists for: a whole window below full, no rise.
+  EXPECT_EQ(judgeChargeProgress(
+                60.0f, 60.5f, 31 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kStalled);
+  // One tenth below full is still below full.
+  EXPECT_EQ(judgeChargeProgress(
+                94.9f, 94.9f, 31 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kStalled);
+}
+
+TEST(ChargeProgressTest, TheRuleBelowFullIsUnchanged)
+{
+  EXPECT_EQ(judgeChargeProgress(
+                60.0f, 62.0f, 31 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kProgressing);
+  EXPECT_EQ(judgeChargeProgress(
+                60.0f, 60.0f, 10 * 60.0, kProgressWindowS, kProgressMinRisePct, kProgressFullPct),
+            ChargeProgress::kWithinWindow);
+}
+
+TEST(ChargeProgressTest, WithoutFullPctASaturatedPackIsJudgedTheOldWay)
+{
+  // A tree that does not pass full_pct keeps the classic rule everywhere.
+  EXPECT_EQ(judgeChargeProgress(100.0f,
+                                100.0f,
+                                45 * 60.0,
+                                kProgressWindowS,
+                                kProgressMinRisePct,
+                                kNoChargeSaturationPct),
+            ChargeProgress::kStalled);
+}
+
+TEST(ManualResumeTreeTest, BothChargeLoopsTellTheStallCheckWherePackIsFull)
+{
+  // Without full_pct, IsChargingProgressing would judge the CV tail these loops
+  // now wait through as a dead charger.
+  const std::string xml = ReadMainTree();
+  for (const char* loop : kChargeLoops)
+  {
+    const std::string block = ExtractNamedFallback(xml, loop);
+    ASSERT_FALSE(block.empty()) << loop << " not found in main_tree.xml.";
+    EXPECT_NE(block.find("<IsChargingProgressing full_pct=\"{battery_full_pct}\"/>"),
+              std::string::npos)
+        << loop << ": IsChargingProgressing must get full_pct (charge_progress.hpp).";
+  }
+  EXPECT_EQ(xml.find("<IsChargingProgressing/>"), std::string::npos)
+      << "An IsChargingProgressing without full_pct would read a CV tail as a dead charger.";
 }

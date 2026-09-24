@@ -669,6 +669,12 @@ public:
 /// 30 minutes of charging.  Returns FAILURE if charging appears stalled
 /// (broken charger, bad connection, etc.).  On first call it records the
 /// baseline and always returns SUCCESS.
+///
+/// At or above `full_pct` the pack is SATURATED and a flat percentage is not a
+/// stall (charge_progress.hpp): battery_percent is voltage-derived and cannot
+/// rise during the charger's CV tail, which is exactly where the charge loops
+/// wait for IsChargeCurrentBelow. Leaving `full_pct` unset keeps the classic
+/// rule everywhere.
 class IsChargingProgressing : public BT::ConditionNode
 {
 public:
@@ -679,7 +685,9 @@ public:
 
   static BT::PortsList providedPorts()
   {
-    return {};
+    return {BT::InputPort<float>(
+        "full_pct",
+        "Resume level [%]; at or above it a flat percentage is a saturated pack, not a stall")};
   }
 
   BT::NodeStatus tick() override;

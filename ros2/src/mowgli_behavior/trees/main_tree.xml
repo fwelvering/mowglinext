@@ -503,6 +503,10 @@
                          (see condition_nodes.hpp IsChargeCurrentBelow). A stalled charger trips
                          IsChargingProgressing → CriticalChargerFailed, which ends the
                          session and aborts the branch so we don't sit here forever.
+                         IsChargingProgressing gets full_pct because waiting for the
+                         current taper means waiting through the CV tail, where the
+                         voltage-derived percentage is flat by construction; it must
+                         not read that as a dead charger (charge_progress.hpp).
 
                          MANUAL RESUME: the operator can press Play (COMMAND_START)
                          during this hold to resume the mow before the pack is full.
@@ -528,7 +532,7 @@
                     <Fallback name="CriticalChargeOrAbort">
                       <RetryUntilSuccessful num_attempts="5760">
                         <Sequence>
-                          <IsChargingProgressing/>
+                          <IsChargingProgressing full_pct="{battery_full_pct}"/>
                           <Fallback>
                             <Sequence>
                               <IsBatteryAbove threshold="{battery_full_pct}"/>
@@ -837,7 +841,10 @@
                        has tapered (IsChargeCurrentBelow) — battery_full_pct
                        alone is not enough, see the identical note on
                        CriticalBatteryDock's charge hold above and
-                       condition_nodes.hpp's IsChargeCurrentBelow. MANUAL
+                       condition_nodes.hpp's IsChargeCurrentBelow — and the same
+                       reason IsChargingProgressing gets full_pct: the CV tail
+                       this waits through has a flat percentage by construction
+                       (charge_progress.hpp). MANUAL
                        RESUME: a Play press (COMMAND_START) during this hold
                        is flagged by the handler and consumed by
                        IsManualResumeRequested, which honours it only above
@@ -857,7 +864,7 @@
                     <Fallback name="ChargeOrAbort">
                     <RetryUntilSuccessful num_attempts="5760">
                       <Sequence>
-                        <IsChargingProgressing/>
+                        <IsChargingProgressing full_pct="{battery_full_pct}"/>
                         <Fallback>
                           <Sequence>
                             <IsBatteryAbove threshold="{battery_full_pct}"/>
