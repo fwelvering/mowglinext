@@ -185,6 +185,30 @@ BT::NodeStatus IsBatteryAbove::tick()
 }
 
 // ---------------------------------------------------------------------------
+// IsChargeCurrentBelow
+// ---------------------------------------------------------------------------
+
+BT::NodeStatus IsChargeCurrentBelow::tick()
+{
+  auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+  std::lock_guard<std::mutex> lock(ctx->context_mutex);
+
+  float threshold = 0.08f;
+  if (auto res = getInput<float>("threshold"))
+  {
+    threshold = res.value();
+  }
+
+  if (!ctx->latest_power.charger_enabled)
+  {
+    return BT::NodeStatus::FAILURE;
+  }
+
+  return ctx->latest_power.charge_current <= threshold ? BT::NodeStatus::SUCCESS
+                                                        : BT::NodeStatus::FAILURE;
+}
+
+// ---------------------------------------------------------------------------
 // IsManualResumeRequested
 // ---------------------------------------------------------------------------
 
