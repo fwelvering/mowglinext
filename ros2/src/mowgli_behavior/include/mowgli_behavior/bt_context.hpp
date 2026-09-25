@@ -33,6 +33,7 @@
 #include "mowgli_behavior/cross_hatch.hpp"
 #include "mowgli_behavior/dig_skip.hpp"
 #include "mowgli_behavior/start_blocked_escape.hpp"
+#include "mowgli_behavior/transit_avoidance.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
 #include "mowgli_interfaces/msg/high_level_status.hpp"
 #include "mowgli_interfaces/msg/power.hpp"
@@ -99,9 +100,9 @@ struct BTContext
   /// attempted_areas, incomplete_retired_areas, area_attempt_count, area_last_coverage,
   /// area_completed_swaths,
   /// area_swath_count, area_resume_pose_index, area_path_pose_count,
-  /// area_plan_fingerprint, completed_areas, coverage_all_complete,
-  /// area_ids, current_area_list_generation, area_verified_generation).
-  /// Those
+  /// area_plan_fingerprint, completed_areas, session_failed_transit_targets,
+  /// coverage_all_complete, area_ids, current_area_list_generation,
+  /// area_verified_generation). Those
   /// are mutated ONLY from this node's own BT action-node callbacks
   /// (FollowStrip, GetNextUnmowedArea, EndSession), the deferred
   /// ~/clear_coverage_resume handling in tickTree(), and (for
@@ -184,6 +185,27 @@ struct BTContext
   bool manual_resume_requested{false};
   std::chrono::steady_clock::time_point manual_resume_requested_time{};
   static constexpr double kManualResumeMaxAgeSec = 30.0;
+
+  /// Latched after COMMAND_STOP is observed in CriticalBatteryDock's
+  /// post-dock charge hold. The critical-battery branch otherwise re-enters
+  /// on every root tick and would send another DockRobot goal before reaching
+  /// StopHoldSequence. Explicit new commands clear this latch. Protected by
+  /// context_mutex.
+  bool critical_charge_stop_latched{false};
+
+  /// Outcome of the most recent DockRobot attempt. Reset when an action starts
+  /// and set only after its action result reports success. Used by the
+  /// critical-battery tree to avoid treating a failed navigation attempt as
+  /// arrival at the charger.
+  bool last_dock_succeeded{false};
+
+  /// Latches a failed critical-battery dock attempt. The mower stays stopped
+  /// until an operator sends a new command, rather than retrying at BT rate.
+  bool critical_dock_failure_latched{false};
+
+  /// Set by LatchCriticalDockFailure and consumed by the node after the current
+  /// tree tick, so persistence remains serialized with coverage-map access.
+  bool critical_dock_failure_persistence_requested{false};
 
   /// Set by the ~/start_in_area service to REQUEST mowing a single, specific
   /// area instead of iterating all areas. This is the one-shot *request*:
@@ -455,6 +477,20 @@ struct BTContext
   /// Areas whose every swath is completed-or-skipped this session. Skipped by
   /// GetNextUnmowedArea. Cleared by EndSession.
   std::set<uint32_t> completed_areas;
+  /// Blade-off inter-unit transit targets that have already failed this
+  /// session (issue #732 — transit_avoidance.hpp). sendCurrentSwath checks
+  /// every transit dispatch against this, regardless of which unit or
+  /// dispatch attempt, so a permanently blocked transit (a LiDAR-observed,
+  /// undrawn obstacle) is skipped immediately instead of being retried
+  /// identically on every subsequent dispatch of the area — each attempt
+  /// used to burn the full transitDeadlineSec bound plus nav2's own retry
+  /// cycle before the area was finally given up on. Recorded by the
+  /// transit_active_ abort handler when a transit fails for a reason OTHER
+  /// than the robot's own pose being blocked (isStartPoseBlocked) — a
+  /// START_OCCUPIED refusal is about where the robot stands, not the target,
+  /// so it is not a fact about this target and must not be recorded here.
+  /// Cleared by EndSession.
+  std::vector<FailedTransitTarget> session_failed_transit_targets;
 
   /// Set when FollowStrip's swath-completion bookkeeping reported an area
   /// fully mowed, but the mow_progress cross-check found the actually-

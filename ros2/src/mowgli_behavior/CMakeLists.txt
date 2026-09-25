@@ -586,6 +586,19 @@ if(BUILD_TESTING)
     ${geometry_msgs_TARGETS}
   )
 
+  # ---- test_transit_avoidance ----
+  # Pure: session failed-transit-target avoidance (issue #732) — which
+  # blade-off inter-unit transits are short-circuited because they already
+  # failed earlier this session. No ROS message dependency (plain doubles).
+  ament_add_gtest(test_transit_avoidance
+    test/test_transit_avoidance.cpp
+  )
+
+  target_include_directories(test_transit_avoidance PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+
   # ---- test_follow_strip_dig ----
   # Tick-level: FollowStrip against fake /follow_path + /navigate_to_pose
   # servers. Covers dig recovery and short scan dropouts: the latter cut and
@@ -775,6 +788,10 @@ if(BUILD_TESTING)
     $<INSTALL_INTERFACE:include>
   )
 
+  target_compile_definitions(test_battery_critical_resume PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+
   target_link_libraries(test_battery_critical_resume
     ${rclcpp_TARGETS}
     ${behaviortree_cpp_TARGETS}
@@ -867,7 +884,7 @@ if(BUILD_TESTING)
   # ---- test_manual_charge_guard ----
   # ManualChargeGuard stops the mow when the operator puts the mower back on
   # the dock mid-run. It is the first reader of IsCharging for which a
-  # TRANSIENT charger bit is a state transition (blade off, stop, CHARGING,
+  # TRANSIENT charger bit is a state transition (blade off, stop, MANUAL_CHARGING,
   # wait, MOWING) rather than a no-op, so IsCharging gained an optional
   # stable_for_sec debounce port. Pins that the port defaults to the raw bit
   # (the other ten <IsCharging/> sites must not change), that the debounce

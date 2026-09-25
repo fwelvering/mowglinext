@@ -316,6 +316,79 @@ public:
   BT::NodeStatus tick() override;
 };
 
+/// Returns SUCCESS for a latched critical charge-hold STOP. The optional port
+/// also latches a current COMMAND_STOP when used inside the post-dock hold.
+/// Used before critical docking and within its charge hold so the completed
+/// dock action is not reissued on later root ticks.
+class IsCriticalChargeStopHeld : public BT::ConditionNode
+{
+public:
+  IsCriticalChargeStopHeld(const std::string& name, const BT::NodeConfig& config)
+      : BT::ConditionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {BT::InputPort<bool>("latch_current_stop",
+                                false,
+                                "Latch COMMAND_STOP here; false only reads the persisted latch")};
+  }
+
+  BT::NodeStatus tick() override;
+};
+
+/// Succeeds only when the most recent DockRobot action completed successfully.
+class IsLastDockSucceeded : public BT::ConditionNode
+{
+public:
+  IsLastDockSucceeded(const std::string& name, const BT::NodeConfig& config)
+      : BT::ConditionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {};
+  }
+
+  BT::NodeStatus tick() override;
+};
+
+/// Reads the operator-reset critical docking failure latch.
+class IsCriticalDockFailureLatched : public BT::ConditionNode
+{
+public:
+  IsCriticalDockFailureLatched(const std::string& name, const BT::NodeConfig& config)
+      : BT::ConditionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {};
+  }
+
+  BT::NodeStatus tick() override;
+};
+
+/// Latches a failed critical docking attempt until the next operator command.
+class LatchCriticalDockFailure : public BT::SyncActionNode
+{
+public:
+  LatchCriticalDockFailure(const std::string& name, const BT::NodeConfig& config)
+      : BT::SyncActionNode(name, config)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {};
+  }
+
+  BT::NodeStatus tick() override;
+};
+
 // ---------------------------------------------------------------------------
 // IsCoverageComplete
 // ---------------------------------------------------------------------------
@@ -596,6 +669,12 @@ public:
 /// 30 minutes of charging.  Returns FAILURE if charging appears stalled
 /// (broken charger, bad connection, etc.).  On first call it records the
 /// baseline and always returns SUCCESS.
+///
+/// At or above `full_pct` the pack is SATURATED and a flat percentage is not a
+/// stall (charge_progress.hpp): battery_percent is voltage-derived and cannot
+/// rise during the charger's CV tail, which is exactly where the charge loops
+/// wait for IsChargeCurrentBelow. Leaving `full_pct` unset keeps the classic
+/// rule everywhere.
 class IsChargingProgressing : public BT::ConditionNode
 {
 public:
@@ -606,7 +685,9 @@ public:
 
   static BT::PortsList providedPorts()
   {
-    return {};
+    return {BT::InputPort<float>(
+        "full_pct",
+        "Resume level [%]; at or above it a flat percentage is a saturated pack, not a stall")};
   }
 
   BT::NodeStatus tick() override;
