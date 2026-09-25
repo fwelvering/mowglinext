@@ -11,17 +11,25 @@
 // ~10 Hz regardless of whether the robot is mowing or parked on the dock for
 // 24 hours. Continuous, needless mechanical wear and wasted heat.
 //
-// ── Why the default GPIO is 12 (physical pin 32), not what the issue proposed
-// The issue assumed GPIO12/13 (pins 32/33) were free because "already used
-// for UART to the mainboard" — they are not; the STM32 mainboard talks over
-// USB CDC. GPIO12/13 are this repo's own DEFAULT LD19 scan-data UART (UART5,
-// /dev/ttyAMA5 — install/lib/lidar.sh). The LD19 only ever TRANSMITS scan
-// data (LiDAR TX -> Pi RXD5/GPIO13/pin33); it never receives anything on
-// TXD5/GPIO12/pin32, so that pin is claimed by the uart5 overlay but
-// functionally idle. Repurposing ONLY GPIO12 for hardware PWM (a second
-// dtoverlay=pwm,pin=12,func=4 line after dtoverlay=uart5) frees it without
-// touching the scan-data path on GPIO13. This is a manual, documented boot
-// config step (see the lidar_pwm_gpio_pin setting's description) — NOT
+// ── Why the default GPIO is 18 (physical pin 12) ────────────────────────────
+// An earlier revision defaulted to GPIO12 (physical pin 32) on the reasoning
+// that it is UART5's otherwise-idle TXD5 half (the LD19 only ever TRANSMITS
+// scan data, on RXD5/GPIO13/pin33 — install/lib/lidar.sh), so repurposing
+// ONLY GPIO12 for PWM would not touch the scan-data path on GPIO13. That
+// reasoning was sound on paper, but field bring-up (issue #569) found the
+// sysfs PWM device opens and every duty-cycle write succeeds cleanly on
+// GPIO12 while the motor's actual behaviour never changes at any tested
+// value — i.e. the Raspberry Pi SIDE of the signal is provably fine, but it
+// never reaches the LD19's motor-control input. Per maintainer guidance this
+// robot's mainboard only physically routes the LiDAR motor-PWM line to
+// GPIO18/19, not GPIO12/13 — a board wiring fact the LD19's own datasheet
+// cannot tell you, since GPIO choice is a Raspberry Pi/carrier-board
+// question, not a LiDAR one. GPIO18 is also the `pwm` device-tree overlay's
+// OWN default pin (needs no non-default func= override, unlike GPIO12's
+// func=4), so it is both the physically-correct pin on this hardware AND the
+// better-tested one. GPIO12/13 remain UART5 and must not be repurposed
+// again without re-deriving this. This is a manual, documented boot config
+// step (see the lidar_pwm_gpio_pin setting's description) — NOT
 // installer-automated.
 //
 // ── What this class does NOT do ─────────────────────────────────────────────

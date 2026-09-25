@@ -2716,12 +2716,11 @@
     "lidarPwm": "Motor spin-down when idle",
     "lidarPwmDescription": "Spin the LiDAR's motor down while the robot is idle instead of running it continuously — needs a one-time boot config change first (below).",
     "lidarPwmPrerequisitesTitle": "Before enabling this",
-    "lidarPwmPrerequisiteBootConfig": "The default PWM pin (GPIO12 / physical pin 32) is normally claimed by UART5 — the LiDAR's own scan-data connection. Add this line to config.txt AFTER the existing UART5 line, not instead of it:",
-    "lidarPwmPrerequisiteThenLine": "then",
+    "lidarPwmPrerequisiteBootConfig": "The default PWM pin (GPIO18 / physical pin 12) needs this line added to config.txt:",
     "lidarPwmPrerequisiteReboot": "Reboot the Pi for the overlay to take effect.",
     "lidarPwmPrerequisiteVerify": "Confirm the PWM device exists:",
     "lidarPwmGpioPin": "PWM GPIO pin",
-    "lidarPwmGpioPinTooltip": "BCM GPIO pin driving the LiDAR's PWM control line. Only change this if you've wired the PWM control line to a different pin and set up the matching boot config overlay yourself."
+    "lidarPwmGpioPinTooltip": "BCM GPIO pin driving the LiDAR's PWM control line. Do not use GPIO12/13 — those are UART5, the LiDAR's own scan-data connection. Only change this if you've wired the PWM control line to a different pin and set up the matching boot config overlay yourself."
   },
   "settingsRain": {
     "rainBehavior": "Rain Behavior",

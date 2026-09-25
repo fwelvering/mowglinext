@@ -37,7 +37,7 @@ def truthy(value):
     return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 enabled = truthy(params.get("lidar_pwm_enabled", False))
-gpio_pin = int(params.get("lidar_pwm_gpio_pin", 12))
+gpio_pin = int(params.get("lidar_pwm_gpio_pin", 18))
 print(f"{'true' if enabled else 'false'} {gpio_pin}")
 PY
 )

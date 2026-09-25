@@ -245,13 +245,13 @@
           "type": "boolean",
           "title": "Enable LiDAR motor PWM control",
           "default": false,
-          "description": "Spin the LD19's motor down while the robot is idle instead of leaving it running continuously (issue #569). REQUIRES a manual boot config change first -- see the LiDAR sensor page prerequisites -- because the default PWM pin (GPIO12/pin 32) is normally claimed by UART5, the LD19's own scan-data connection. Read by the lidar-ldlidar sidecar container's mowgli_lidar_pwm node, not a mowgli_bringup ROS2 parameter."
+          "description": "Spin the LD19's motor down while the robot is idle instead of leaving it running continuously (issue #569). REQUIRES a manual boot config change first -- see the LiDAR sensor page prerequisites -- adding a dtoverlay=pwm line for the PWM GPIO pin below. Read by the lidar-ldlidar sidecar container's mowgli_lidar_pwm node, not a mowgli_bringup ROS2 parameter."
         },
         "lidar_pwm_gpio_pin": {
           "type": "integer",
           "title": "LiDAR motor PWM GPIO pin",
-          "default": 12,
-          "description": "BCM GPIO pin driving the LD19's PWM control line. Default 12 (physical pin 32) is UART5's TXD5 -- the LD19 never receives anything on that pin (it only transmits scan data on RXD5/GPIO13/pin33), so it is free once the matching dtoverlay=pwm,pin=12,func=4 boot config line is added AFTER dtoverlay=uart5. Changing this pin requires re-confirming the same reasoning for whichever pin you pick -- it is not validated against what else that pin is wired to."
+          "default": 18,
+          "description": "BCM GPIO pin driving the LD19's PWM control line. Default 18 (physical pin 12) is the Raspberry Pi PWM device-tree overlay's own default pin -- add dtoverlay=pwm,pin=18,func=2 to the boot config. An earlier default of GPIO12 (reasoned as UART5's otherwise-idle TXD5 half) opened and wrote cleanly at the Pi/kernel level but never reached the LD19's motor -- per maintainer guidance this mainboard only physically routes the LiDAR motor-PWM line to GPIO18/19, a board-wiring fact no software check can confirm. Do NOT reuse GPIO12/13 -- they are UART5, the LD19's own scan-data connection. Changing this pin requires re-confirming it is actually wired to the LiDAR motor control input on your board."
         },
         "use_lidar_map_anchor": {
           "type": "boolean",

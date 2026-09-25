@@ -43,7 +43,7 @@ def generate_launch_description() -> LaunchDescription:
     )
     lidar_pwm_gpio_pin = DeclareLaunchArgument(
         "lidar_pwm_gpio_pin",
-        default_value="12",
+        default_value="18",
         description="GPIO pin (BCM numbering) driving the LD19 PWM control line",
     )
 

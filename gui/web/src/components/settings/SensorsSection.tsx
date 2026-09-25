@@ -69,9 +69,7 @@ export const SensorsSection: React.FC<Props> = ({ values, onChange }) => {
                                     <Space direction="vertical" size={4} style={{ fontSize: 12 }}>
                                         <span>{t("settingsSensors.lidarPwmPrerequisiteBootConfig")}</span>
                                         <span>
-                                            <Text code>dtoverlay=uart5</Text>{" "}
-                                            {t("settingsSensors.lidarPwmPrerequisiteThenLine")}{" "}
-                                            <Text code>dtoverlay=pwm,pin=12,func=4</Text>
+                                            <Text code>dtoverlay=pwm,pin=18,func=2</Text>
                                         </span>
                                         <span>{t("settingsSensors.lidarPwmPrerequisiteReboot")}</span>
                                         <span>

@@ -40,7 +40,7 @@ public:
       return;
     }
 
-    const int gpio_pin = declare_parameter<int>("lidar_pwm_gpio_pin", 12);
+    const int gpio_pin = declare_parameter<int>("lidar_pwm_gpio_pin", 18);
     // NOT derived from gpio_pin — the pwmchip/channel mapping for a given
     // GPIO depends on the board's device tree and is not fixed across
     // overlay versions. Confirm with `ls /sys/class/pwm/` on real hardware

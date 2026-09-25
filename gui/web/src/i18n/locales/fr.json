@@ -2712,12 +2712,11 @@
     "lidarPwm": "Arrêt du moteur à l'arrêt",
     "lidarPwmDescription": "Arrête le moteur du LiDAR pendant que le robot est inactif au lieu de le laisser tourner en continu — nécessite d'abord une modification unique de la configuration de démarrage (ci-dessous).",
     "lidarPwmPrerequisitesTitle": "Avant d'activer ceci",
-    "lidarPwmPrerequisiteBootConfig": "La broche PWM par défaut (GPIO12 / broche physique 32) est normalement utilisée par UART5 — la connexion de données du LiDAR lui-même. Ajoutez cette ligne à config.txt APRÈS la ligne UART5 existante, pas à sa place :",
-    "lidarPwmPrerequisiteThenLine": "puis",
+    "lidarPwmPrerequisiteBootConfig": "La broche PWM par défaut (GPIO18 / broche physique 12) nécessite l'ajout de cette ligne à config.txt :",
     "lidarPwmPrerequisiteReboot": "Redémarrez le Pi pour que l'overlay prenne effet.",
     "lidarPwmPrerequisiteVerify": "Vérifiez que le périphérique PWM existe :",
     "lidarPwmGpioPin": "Broche GPIO PWM",
-    "lidarPwmGpioPinTooltip": "Broche GPIO (numérotation BCM) qui pilote la ligne de contrôle PWM du LiDAR. Ne modifiez ceci que si vous avez câblé la ligne de contrôle PWM sur une autre broche et configuré vous-même l'overlay de démarrage correspondant."
+    "lidarPwmGpioPinTooltip": "Broche GPIO (numérotation BCM) qui pilote la ligne de contrôle PWM du LiDAR. N'utilisez pas GPIO12/13 — ce sont UART5, la connexion de données du LiDAR lui-même. Ne modifiez ceci que si vous avez câblé la ligne de contrôle PWM sur une autre broche et configuré vous-même l'overlay de démarrage correspondant."
   },
   "settingsRain": {
     "rainBehavior": "Comportement en cas de pluie",
