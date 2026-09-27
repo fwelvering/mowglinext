@@ -219,12 +219,13 @@ func (b DockerBackend) planBundle(ctx context.Context, d Deployment, overrides m
 			return nil, nil, errors.New("release service choices disagree with verified Compose bundle")
 		}
 	}
-	ready, err := b.readiness(ctx)
-	if err != nil {
+	// A firmware-protocol mismatch is deliberately NOT checked here — see
+	// docker.go's PlanSelectedImages and Plan.FirmwareProtocolMismatch's doc
+	// comment (model.go). Only that the readiness endpoint is reachable at
+	// all is required to plan; MakeServicePlan queries the live value
+	// separately via b.Readiness() for the review UI.
+	if _, err := b.readiness(ctx); err != nil {
 		return nil, nil, err
-	}
-	if ready.FirmwareProtocol != d.FirmwareProtocol {
-		return nil, nil, errors.New("target requires a different mainboard firmware protocol")
 	}
 	current, _, err := b.model(ctx)
 	if err != nil {

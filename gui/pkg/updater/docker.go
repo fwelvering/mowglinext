@@ -229,12 +229,14 @@ func (b DockerBackend) PlanSelectedImages(ctx context.Context, d Deployment, ove
 	if err := d.Validate(b.Config.Trusted); err != nil {
 		return nil, err
 	}
-	ready, err := b.readiness(ctx)
-	if err != nil {
+	// A firmware-protocol mismatch is deliberately NOT checked here: the
+	// release that bumps the protocol is exactly the one that ships the
+	// matching firmware, so refusing to plan it would make that release
+	// permanently uninstallable (see Plan.FirmwareProtocolMismatch's doc
+	// comment). MakeServicePlan queries live readiness separately, through
+	// the b.Readiness() below, to populate that flag for the review UI.
+	if _, err := b.readiness(ctx); err != nil {
 		return nil, err
-	}
-	if ready.FirmwareProtocol != d.FirmwareProtocol {
-		return nil, errors.New("target requires a different mainboard firmware protocol")
 	}
 	c, _, err := b.model(ctx)
 	if err != nil {
@@ -369,6 +371,15 @@ func (b DockerBackend) readiness(ctx context.Context) (Readiness, error) {
 		e = json.Unmarshal(data, &r)
 	}
 	return r, e
+}
+
+// Readiness exposes readiness() to Manager, which only holds the abstract
+// Backend interface. Queried through an optional-interface type assertion
+// (matching PlanStack/ValidateImageStorage below) rather than widening
+// Backend itself, since only MakeServicePlan needs it (to populate
+// Plan.FirmwareProtocolMismatch/CurrentFirmwareProtocol for the review UI).
+func (b DockerBackend) Readiness(ctx context.Context) (Readiness, error) {
+	return b.readiness(ctx)
 }
 func (b DockerBackend) MaintenanceSet() (bool, error) {
 	_, err := os.Stat(filepath.Join(b.Config.StateDir, "maintenance"))
