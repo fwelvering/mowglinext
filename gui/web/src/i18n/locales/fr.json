@@ -3759,9 +3759,6 @@
     "imageReference": "référence d’image",
     "reviewCustom": "Examiner les images personnalisées",
     "customInstallAccept": "Installer cette combinaison. Je comprends les risques et dispose d’un accès de récupération.",
-    "firmwareProtocolWarning": "Cette mise à jour nécessite un nouveau firmware de la carte mère",
-    "firmwareProtocolWarningHelp": "Cette version nécessite le protocole de firmware {{required}} ; la carte mère indique actuellement le protocole {{current}}. Le logiciel s'installera quand même. Tant que vous n'avez pas flashé le firmware correspondant ensuite, la tondeuse refusera en toute sécurité de tondre (le propre contrôle de compatibilité du firmware l'en empêche) plutôt que de mal se comporter. Un bouton « Flasher le firmware » apparaîtra en bas de cette page une fois la mise à jour terminée.",
-    "firmwareProtocolAccept": "Installer quand même. Je flasherai le nouveau firmware ensuite.",
 
     "built": "Compilé",
     "published": "Publié",

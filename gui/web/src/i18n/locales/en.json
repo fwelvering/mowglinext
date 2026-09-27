@@ -3759,9 +3759,6 @@
     "imageReference": "image reference",
     "reviewCustom": "Review custom images",
     "customInstallAccept": "Install this custom mix. I understand the risks and have recovery access.",
-    "firmwareProtocolWarning": "This update requires new mainboard firmware",
-    "firmwareProtocolWarningHelp": "This release requires firmware protocol {{required}}; the mainboard currently reports protocol {{current}}. The software will still install. Until you flash matching firmware afterward, the mower will safely refuse to mow (the firmware's own compatibility check blocks it) rather than misbehave. A \"Flash firmware\" button will appear at the bottom of this page once the update finishes.",
-    "firmwareProtocolAccept": "Install anyway. I will flash the new firmware afterward.",
 
     "built": "Built",
     "published": "Published",

@@ -314,18 +314,6 @@ func (m *Manager) MakeServicePlan(ctx context.Context, id string, pinned bool, r
 	p := Plan{Stack: stack, Overrides: overrides, Target: *target, Policy: m.state.Policy, Fingerprint: fingerprint, ExpiresAt: m.now().Add(15 * time.Minute), Images: images, Previous: previous}
 	p.Policy.Pinned = pinned
 	p.ID = fmt.Sprintf("plan-%d", m.now().UnixNano())
-	// Populate the firmware-protocol mismatch flag for the review UI (see
-	// Plan.FirmwareProtocolMismatch's doc comment, model.go). Best-effort: a
-	// failed readiness query here does not fail the plan, it just leaves the
-	// review UI without that one badge.
-	if checker, ok := m.backend.(interface {
-		Readiness(context.Context) (Readiness, error)
-	}); ok {
-		if ready, rerr := checker.Readiness(ctx); rerr == nil {
-			p.CurrentFirmwareProtocol = ready.FirmwareProtocol
-			p.FirmwareProtocolMismatch = ready.FirmwareProtocol != target.FirmwareProtocol
-		}
-	}
 	m.state.Plans = []Plan{p}
 	return p, m.save()
 }
@@ -347,8 +335,8 @@ func (m *Manager) StartAcknowledged(id string, customAcknowledged bool) (string,
 	if plan == nil || m.now().After(plan.ExpiresAt) {
 		return "", errors.New("plan expired; review again")
 	}
-	if (len(plan.CustomImages) > 0 || plan.FirmwareProtocolMismatch) && !customAcknowledged {
-		return "", errors.New("confirm the custom image or firmware warning before installation")
+	if len(plan.CustomImages) > 0 && !customAcknowledged {
+		return "", errors.New("confirm the custom image warning before installation")
 	}
 	j := Job{PreviousCustomImages: m.state.CustomImages, ID: fmt.Sprintf("job-%d", m.now().UnixNano()), Kind: "containers", Phase: "planned", StartedAt: m.now(), Plan: *plan, PreviousPolicy: m.state.Policy, PreviousActive: m.state.Active, PreviousOverrides: m.state.Overrides, PreviousImages: m.state.InstalledImages, PreviousJobID: m.state.ActiveJobID}
 	if m.state.InstalledPolicy != nil {
@@ -601,21 +589,7 @@ func (m *Manager) run(recovery bool) {
 			err = m.phase("verifying", nil)
 		}
 		if err == nil {
-			// A firmware-protocol mismatch was disclosed and acknowledged at
-			// plan/apply time (Plan.FirmwareProtocolMismatch,
-			// StartAcknowledged) — passing nil here skips readinessProblems'
-			// equivalent check (verify.go), which is the ONLY thing it uses
-			// the *Deployment for. Without this, verification would never see
-			// 3 consecutive healthy checks (the board still needs flashing),
-			// time out, and auto-roll-back the update we just deliberately
-			// let through. Every other verification (containers, images,
-			// mower readiness, maintenance marker, GPS/LiDAR advisories) is
-			// unaffected.
-			target := &j.Plan.Target
-			if j.Plan.FirmwareProtocolMismatch {
-				target = nil
-			}
-			err = m.backend.Verify(ctx, j.Plan.Images, target)
+			err = m.backend.Verify(ctx, j.Plan.Images, &j.Plan.Target)
 		}
 		var installed map[string]string
 		if err == nil {

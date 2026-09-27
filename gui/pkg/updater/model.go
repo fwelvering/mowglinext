@@ -185,21 +185,6 @@ type Plan struct {
 	Images       map[string]string      `json:"images"`
 	Previous     map[string]string      `json:"previous"`
 	Overrides    map[string]Deployment  `json:"overrides,omitempty"`
-	// The target release requires a different mainboard firmware protocol
-	// than what the board currently reports. Deliberately NOT a plan-time
-	// error (see docker.go/stack.go): a release that bumps the protocol is
-	// exactly the release that ships the matching firmware, so refusing to
-	// plan it would make that release permanently uninstallable. The operator
-	// is warned and must acknowledge before install (StartAcknowledged), and
-	// hardware_bridge_node's own independent handshake already blocks
-	// PreFlightCheck from mowing on a real mismatch — this flag exists so the
-	// review UI can explain that and so run() knows to skip the equivalent
-	// post-apply check (see manager.go) instead of auto-rolling-back the
-	// update it just let through.
-	FirmwareProtocolMismatch bool `json:"firmware_protocol_mismatch,omitempty"`
-	// Live protocol reported by the board at plan time, for display next to
-	// Target.FirmwareProtocol (the release's requirement) in the review UI.
-	CurrentFirmwareProtocol int `json:"current_firmware_protocol,omitempty"`
 }
 type Job struct {
 	PreviousCustomImages map[string]CustomImage `json:"previous_custom_images,omitempty"`

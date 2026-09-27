@@ -188,26 +188,8 @@ ROS2, GUI, GPS and the installed supported LiDAR variant participate by default.
 Additional installed first-party services opt in through Compose labels (below).
 Unmanaged services, including MQTT by default and the optional remote-access sidecar `mowgli-remote` (GUI-owned, see `docs/REMOTE_ACCESS.md`), remain outside this transaction. Firmware, host OS and Docker
 upgrades are excluded; custom/LFP firmware is not flashed. Targets requiring a
-different updater API, layout or data schema are rejected. Older releases
-without a deployment descriptor are comparison-only.
-
-A target requiring a different **mainboard firmware protocol** is not
-rejected: the release that bumps the protocol is necessarily the one that
-ships firmware to match it, so refusing to plan such a release would make it
-permanently uninstallable (a chicken-and-egg deadlock). The operator sees an
-explicit warning at review time (current vs. required protocol) and must
-acknowledge it before installing; the equivalent post-apply readiness check
-is skipped for that one, acknowledged mismatch so the update isn't
-auto-rolled-back for a condition it was explicitly allowed to create. This is
-a functional gap, not a safety one: `hardware_bridge_node` runs its own,
-independent firmware-compatibility handshake and already blocks
-`PreFlightCheck` from letting the robot mow while the protocols disagree,
-regardless of what the updater does. The "Mainboard" card on the Updates page
-offers a one-click path to flash matching firmware as soon as it detects the
-mismatch — which, after such an update, is immediately. (The custom-image
-plan path is unaffected and still rejects a firmware-protocol mismatch
-outright — it carries its own separate unverified-image warning and isn't
-how a real release like this arrives.)
+different firmware protocol, updater API, layout or data schema are rejected.
+Older releases without a deployment descriptor are comparison-only.
 
 ## Installed stack, health and component versions
 
