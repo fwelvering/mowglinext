@@ -34,6 +34,8 @@ set(msg_files
   "msg/LidarMotorStatus.msg"
   "msg/LidarIgnoreCorridor.msg"
   "msg/LidarIgnoreCorridorArray.msg"
+  "msg/RecordedAreaPolygon.msg"
+  "msg/RecordedAreaPolygonArray.msg"
 )
 
 # Declare service files
