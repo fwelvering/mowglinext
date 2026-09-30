@@ -36,8 +36,13 @@ import {AreasListPanel} from "./map/components/AreasListPanel.tsx";
 import {TrackedObstaclesPanel} from "./map/components/TrackedObstaclesPanel.tsx";
 import {ObstacleProposalsPanel} from "./map/components/ObstacleProposalsPanel.tsx";
 import {CORRIDOR_COLOR, LidarCorridorsPanel} from "./map/components/LidarCorridorsPanel.tsx";
+
+// Distinct from CORRIDOR_COLOR (pink) and the red drawn-obstacle fill, so the
+// toggleable clearance-preview outline is never mistaken for either.
+const OBSTACLE_CLEARANCE_PREVIEW_COLOR = '#faad14';
 import {EditLidarCorridorModal} from "./map/components/EditLidarCorridorModal.tsx";
 import {DEFAULT_CORRIDOR_WIDTH_M, useLidarCorridors} from "./map/hooks/useLidarCorridors.ts";
+import {useObstacleClearancePreview} from "./map/hooks/useObstacleClearancePreview.ts";
 import {buildCorridorSideRuns, simplifyPolyline, smoothPolyline, type XY} from "./map/utils/corridorGeometry.ts";
 import {extractObstacleProposals, isDigProposal} from "./map/utils/obstacleProposals.ts";
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
@@ -1079,6 +1084,15 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         recordedAreaRings.some((ring) => isRingInsidePolygon([[lng, lat]], ring)),
     [recordedAreaRings]);
 
+    // All drawn obstacle polygons, for the toggleable clearance-preview
+    // overlay below. Memoised so useObstacleClearancePreview's own content
+    // signature stays stable across unrelated re-renders.
+    const obstacleFeaturesList = useMemo(
+        (): ObstacleFeature[] => Object.values(features).filter((f): f is ObstacleFeature => f instanceof ObstacleFeature),
+        [features],
+    );
+    const obstacleClearancePreview = useObstacleClearancePreview(obstacleFeaturesList, datum, offsetX, offsetY);
+
     // The actual ignored BAND (width_m wide), not just the centerline the
     // operator clicked — so it's visible on the map exactly what area gets
     // an ignore, not only where. Shown in both view and edit mode (DrawControl
@@ -1582,6 +1596,17 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             layout={{'line-cap': 'round', 'line-join': 'round'}}
                             paint={{'line-color': CORRIDOR_COLOR, 'line-width': 4, 'line-dasharray': [2, 1]}}/>
                     </Source>
+                    {/* Toggleable preview (off by default) of the LIVE obstacle_margin
+                        buffer coverage_server actually plans against — a distinct
+                        dashed amber outline so it is never mistaken for the drawn
+                        obstacle polygon itself. */}
+                    {obstacleClearancePreview.enabled && (
+                        <Source type={"geojson"} id={"obstacle-clearance-preview"} data={obstacleClearancePreview.features}>
+                            <Layer type={"line"} id={"obstacle-clearance-preview-line"}
+                                layout={{'line-cap': 'round', 'line-join': 'round'}}
+                                paint={{'line-color': OBSTACLE_CLEARANCE_PREVIEW_COLOR, 'line-width': 2, 'line-dasharray': [1, 1.5]}}/>
+                        </Source>
+                    )}
                     {/* fusion_graph's LiDAR anchor map (walls as ink, scanned ground as a faint wash). */}
                     {lidarMapImage && (
                         <Source type={"image"} id={"lidar-map"} url={lidarMapImage.url} coordinates={lidarMapImage.coordinates}>
@@ -1656,6 +1681,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                         onUndo={handleUndo}
                         onRedo={handleRedo}
                         onToggleSatellite={() => setUseSatellite(!useSatellite)}
+                        showObstacleClearance={obstacleClearancePreview.enabled}
+                        onToggleObstacleClearance={() => obstacleClearancePreview.setEnabled((v) => !v)}
                         mowerAppearanceId={mowerAppearance.id}
                         onMowerAppearanceChange={handleMowerAppearanceChange}
                         dockAppearanceId={dockAppearance.id}
@@ -1730,6 +1757,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             onTogglePitch={togglePitch}
                             onEditMap={handleEditMap}
                             onToggleSatellite={() => setUseSatellite(!useSatellite)}
+                            showObstacleClearance={obstacleClearancePreview.enabled}
+                            onToggleObstacleClearance={() => obstacleClearancePreview.setEnabled((v) => !v)}
                             onManualMode={handleManualMode}
                             onStopManualMode={handleStopManualMode}
                             onBackupMap={handleBackupMap}
