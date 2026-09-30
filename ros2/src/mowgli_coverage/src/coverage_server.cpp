@@ -139,14 +139,16 @@ nav2::CallbackReturn CoverageServer::on_configure(const rclcpp_lifecycle::State&
           std::bind(&CoverageServer::previewObstacleClearance,
                     this,
                     std::placeholders::_1,
-                    std::placeholders::_2));
+                    std::placeholders::_2,
+                    std::placeholders::_3));
   correct_recorded_obstacle_service_ =
       create_service<mowgli_interfaces::srv::CorrectRecordedObstacle>(
           "~/correct_recorded_obstacle",
           std::bind(&CoverageServer::correctRecordedObstacle,
                     this,
                     std::placeholders::_1,
-                    std::placeholders::_2));
+                    std::placeholders::_2,
+                    std::placeholders::_3));
 
   RCLCPP_INFO(get_logger(),
               "F2C v3 boustrophedon backend ready. robot_width=%.2fm "
@@ -945,13 +947,13 @@ void CoverageServer::planCoverage()
 }
 
 void CoverageServer::previewObstacleClearance(
+    const std::shared_ptr<rmw_request_id_s> /*request_header*/,
     const std::shared_ptr<mowgli_interfaces::srv::PreviewObstacleClearance::Request> request,
     std::shared_ptr<mowgli_interfaces::srv::PreviewObstacleClearance::Response> response)
 {
   // Same clamp as planCoverage's live read: a stray `ros2 param set` cannot
   // make the preview claim a margin bigger than any real plan would ever use.
-  const double obstacle_margin =
-      std::clamp(get_parameter("obstacle_margin").as_double(), 0.0, 1.0);
+  const double obstacle_margin = std::clamp(get_parameter("obstacle_margin").as_double(), 0.0, 1.0);
   response->obstacle_margin_m = obstacle_margin;
   response->buffered.reserve(request->obstacles.size());
 
@@ -983,6 +985,7 @@ void CoverageServer::previewObstacleClearance(
 }
 
 void CoverageServer::correctRecordedObstacle(
+    const std::shared_ptr<rmw_request_id_s> /*request_header*/,
     const std::shared_ptr<mowgli_interfaces::srv::CorrectRecordedObstacle::Request> request,
     std::shared_ptr<mowgli_interfaces::srv::CorrectRecordedObstacle::Response> response)
 {
@@ -1002,14 +1005,11 @@ void CoverageServer::correctRecordedObstacle(
   if (corrected.size() < 3)
   {
     response->success = false;
-    response->message =
-        "Obstacle collapsed once corrected for the chassis half-width (" +
-        std::to_string(half_width) +
-        " m) — it was recorded too small/thin to exist once the extra "
-        "recording margin is removed. Re-record it, driving a wider loop.";
-    RCLCPP_WARN(get_logger(),
-                "correct_recorded_obstacle: %s",
-                response->message.c_str());
+    response->message = "Obstacle collapsed once corrected for the chassis half-width (" +
+                        std::to_string(half_width) +
+                        " m) — it was recorded too small/thin to exist once the extra "
+                        "recording margin is removed. Re-record it, driving a wider loop.";
+    RCLCPP_WARN(get_logger(), "correct_recorded_obstacle: %s", response->message.c_str());
     return;
   }
 
