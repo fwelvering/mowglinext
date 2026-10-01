@@ -330,6 +330,45 @@ TEST(CoveragePlanning, FixedAngleIsHonouredAndDeterministic)
   }
 }
 
+// AUTO angle (mow_angle_deg < 0) on a field BELOW kAutoAngleMaxAreaM2 (400 m²)
+// runs the EXHAUSTIVE f2c::sg::BruteForce::generateBestSwaths search —
+// LargeFieldFallbackIsDeterministic below only covers the >400 m² longest-edge
+// branch, and FixedAngleIsHonouredAndDeterministic above never enters the
+// best-angle search at all (angle >= 0 skips it). Field-reported 2026-10-01: a
+// real ~54 m² garden, re-planned after a dock-charge resume with its area/
+// obstacles byte-identical, came back with a DIFFERENT pose count than the
+// persisted plan (12782 vs 12826) — which tripped FollowStrip's plan-
+// fingerprint mismatch guard and discarded a 79→90% mid-area resume, re-mowing
+// completed headlands from scratch. recordedArea1 (~26 m²) is the smallest
+// realistic fixture already in this file that exercises the same AUTO/
+// exhaustive path; this pins the resolved angle and swath layout to be
+// byte-identical across repeated calls on an UNCHANGED polygon — the exact
+// invariant the resume-cursor fingerprint depends on (CLAUDE.md invariant #7).
+TEST(CoveragePlanning, AutoAngleSmallFieldIsDeterministic)
+{
+  const auto cell = makeRecordedArea1();
+  ASSERT_LT(cell.area(), 400.0)
+      << "fixture must stay under kAutoAngleMaxAreaM2 to exercise the exhaustive "
+         "best-angle search, not the longest-edge fallback";
+  const auto a = planDefault(cell);
+  const auto b = planDefault(cell);
+
+  ASSERT_FALSE(a.swaths.empty());
+  EXPECT_NEAR(a.swath_angle_rad, b.swath_angle_rad, 1e-9)
+      << "AUTO best-angle search resolved a different swath angle on an unchanged polygon";
+  ASSERT_EQ(a.swaths.size(), b.swaths.size())
+      << "swath count differs across re-plans of the identical field — the exact "
+         "mismatch that trips FollowStrip's persisted-plan fingerprint guard and "
+         "discards progress on a mid-area dock-resume";
+  for (std::size_t i = 0; i < a.swaths.size(); ++i)
+  {
+    EXPECT_NEAR(a.swaths[i].first.first, b.swaths[i].first.first, 1e-9) << "swath " << i;
+    EXPECT_NEAR(a.swaths[i].first.second, b.swaths[i].first.second, 1e-9) << "swath " << i;
+    EXPECT_NEAR(a.swaths[i].second.first, b.swaths[i].second.first, 1e-9) << "swath " << i;
+    EXPECT_NEAR(a.swaths[i].second.second, b.swaths[i].second.second, 1e-9) << "swath " << i;
+  }
+}
+
 // 5x5 m square with a 1.5x1.5 m central hole: no swath may cross the hole —
 // each sweep line is clipped into per-side swaths (F2C v3 makes every disjoint
 // clip its own swath; that property replaces decomposition).
