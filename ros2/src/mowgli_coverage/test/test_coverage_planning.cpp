@@ -330,6 +330,46 @@ TEST(CoveragePlanning, FixedAngleIsHonouredAndDeterministic)
   }
 }
 
+// BruteForce steps lanes by a fixed op_width from one edge, so an extent that is
+// not a whole number of lanes left a strip (up to op_width/2 + the stepping
+// granularity) on the far side that no lane covered — field-reported 2026-10-02
+// as a skipped strip under the headland. The lanes are now spread evenly over
+// the extent. 1.0 m across / 0.16 m lanes = 6.25: fixed stepping puts the last
+// lane centre 0.12 m from the far edge (strip 0.04 m beyond its reach), even
+// spreading puts BOTH outer lanes within op_width/2 of their edge.
+TEST(CoveragePlanning, SwathsAreSpreadEvenlyAcrossTheCell)
+{
+  constexpr double kOpWidth = 0.16;
+  constexpr double kHeight = 1.0;
+  const auto plan = planBoustrophedon(makeRectCentered(3.0, kHeight),
+                                      kOpWidth,
+                                      0.18,
+                                      /*passes=*/-1,
+                                      /*chassis_safety_inset=*/kOpWidth / 2.0,
+                                      /*mow_angle_rad=*/0.0,
+                                      0.15);
+  ASSERT_TRUE(plan.rings.empty());
+  ASSERT_GE(plan.swaths.size(), 6u);
+
+  std::vector<double> lanes;
+  for (const auto& s : plan.swaths)
+  {
+    lanes.push_back(0.5 * (s.first.second + s.second.second));
+  }
+  std::sort(lanes.begin(), lanes.end());
+
+  constexpr double kSlack = 0.01;  // densification / GEOS buffer noise
+  EXPECT_LE(lanes.front() - (-kHeight / 2.0), kOpWidth / 2.0 + kSlack)
+      << "near-edge strip left unplanned";
+  EXPECT_LE(kHeight / 2.0 - lanes.back(), kOpWidth / 2.0 + kSlack)
+      << "far-edge strip left unplanned — lanes were stepped, not spread evenly";
+  for (std::size_t i = 1; i < lanes.size(); ++i)
+  {
+    EXPECT_LE(lanes[i] - lanes[i - 1], kOpWidth + 1e-6)
+        << "gap between lanes " << i - 1 << "→" << i;
+  }
+}
+
 // AUTO angle (mow_angle_deg < 0) on a field BELOW kAutoAngleMaxAreaM2 (400 m²)
 // runs the EXHAUSTIVE f2c::sg::BruteForce::generateBestSwaths search —
 // LargeFieldFallbackIsDeterministic below only covers the >400 m² longest-edge
