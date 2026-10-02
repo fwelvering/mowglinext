@@ -279,7 +279,7 @@ export interface UseMapEditingReturn {
 
     // Modal action handlers
     handleSaveNewArea: () => void;
-    updateMowingArea: () => void;
+    updateMowingArea: (correctedGeometry?: Polygon) => void;
     cancelAreaModal: () => void;
     deleteFeature: () => void;
 }
@@ -826,6 +826,7 @@ export function useMapEditing({
                 orig_mowing_order: props?.mowing_order ?? 9999,
                 feature_type: ftype,
                 orig_feature_type: ftype,
+                shrink_recorded: true,
             } as MowingAreaEdit);
             setAreaModelOpen(true);
         },
@@ -1102,7 +1103,7 @@ export function useMapEditing({
         setModalOpen(false);
     }, [currentFeature, setFeatures]);
 
-    const updateMowingArea = useCallback(() => {
+    const updateMowingArea = useCallback((correctedGeometry?: Polygon) => {
         if (!curMowingAreaFeature || !curMowingAreaFeature.id) return;
 
         setAreaModelOpen(false);
@@ -1132,7 +1133,10 @@ export function useMapEditing({
                     const parentArea = findContainingArea(geometry.coordinates[0] ?? [], candidates);
                     if (!parentArea) return;
                     replacement = new ObstacleFeature(newId, parentArea);
-                    replacement.setGeometry(geometry);
+                    // Already shrunk by the caller (recorded outline → obstacle).
+                    replacement.setGeometry(
+                        correctedGeometry?.type === "Polygon" ? correctedGeometry : geometry
+                    );
                     break;
                 }
                 default: // workarea
