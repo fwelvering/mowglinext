@@ -25,7 +25,9 @@ import {useMapOffset} from "./map/hooks/useMapOffset.ts";
 import {useMapBearing} from "./map/hooks/useMapBearing.ts";
 import {useMapBearingCamera} from "./map/hooks/useMapBearingCamera.ts";
 import {useManualMode} from "./map/hooks/useManualMode.ts";
-import {useMapEditing} from "./map/hooks/useMapEditing.ts";
+import {useMapEditing, type ShrinkMemory} from "./map/hooks/useMapEditing.ts";
+import {useObstacleOriginals} from "./map/hooks/useObstacleOriginals.ts";
+import {findOriginal, type XY as OutlineXY} from "./map/utils/obstacleOriginals.ts";
 import {useMapStreams} from "./map/hooks/useMapStreams.ts";
 import {useMapFiles, type ImportOpenMowerSummary} from "./map/hooks/useMapFiles.ts";
 import {useResetMowingProgress} from "./map/hooks/useResetMowingProgress.tsx";
@@ -164,6 +166,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     // operator is editing (there is no side panel to hold the width field there).
     const [corridorWidthModalIndex, setCorridorWidthModalIndex] = useState<number | null>(null);
     const lidarCorridors = useLidarCorridors();
+    const obstacleOriginals = useObstacleOriginals();
     // Snapshot of the corridor list taken the moment map-edit mode is
     // entered. Unlike areas/obstacles (which live only in local `features`
     // state until "Save Map"), corridor edits are written to map_server
@@ -413,6 +416,34 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         }
     }, [envs]);
 
+    // Outline an obstacle had before the recorded-obstacle shrink, kept in map-frame
+    // metres in the robot's config store (survives reloads and backups); the
+    // editor works in lng/lat, so convert at this boundary.
+    const {getRecords: getOutlineRecords, remember: rememberOutline, forget: forgetOutline} = obstacleOriginals;
+    const shrinkMemory = useMemo<ShrinkMemory>(() => {
+        const toXY = (ring: Position[]): OutlineXY[] => ring.map(([lng, lat]) => {
+            const [x, y] = itranspose(offsetX, offsetY, datum, lat, lng);
+            return {x, y};
+        });
+        const toRing = (xy: OutlineXY[]): Position[] =>
+            closeRing(xy.map((p) => transpose(offsetX, offsetY, datum, p.y, p.x)));
+        return {
+            find: (ring) => {
+                if (datum[0] === 0) return undefined;
+                const original = findOriginal(getOutlineRecords(), toXY(ring));
+                return original ? toRing(original) : undefined;
+            },
+            remember: (originalRing, shrunkRing) => {
+                if (datum[0] === 0) return;
+                void rememberOutline({original: toXY(originalRing), shrunk: toXY(shrunkRing)});
+            },
+            forget: (shrunkRing) => {
+                if (datum[0] === 0) return;
+                void forgetOutline(toXY(shrunkRing));
+            },
+        };
+    }, [offsetX, offsetY, datum, getOutlineRecords, rememberOutline, forgetOutline]);
+
     const {
         modalOpen,
         areaModelOpen,
@@ -434,6 +465,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         drawRef,
         notification,
         mapInstanceRef,
+        shrinkMemory,
     });
 
     // A just-recorded area turned into an obstacle: the recording followed the
@@ -852,6 +884,8 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         buildFeaturesFromMap,
         corridors: lidarCorridors.corridors,
         restoreCorridors: lidarCorridors.save,
+        obstacleOriginals: obstacleOriginals.records,
+        restoreObstacleOriginals: obstacleOriginals.replaceAll,
     });
 
 

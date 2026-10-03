@@ -64,6 +64,8 @@ describe('useMapFiles handleSaveMap id round-trip', () => {
             buildFeaturesFromMap: vi.fn(),
             corridors: [],
             restoreCorridors: vi.fn(),
+            obstacleOriginals: [],
+            restoreObstacleOriginals: vi.fn(),
         }));
 
         await act(async () => {
@@ -88,6 +90,10 @@ describe('useMapFiles handleSaveMap id round-trip', () => {
 // a backup that only stringified `map` silently lost them.
 describe('useMapFiles backup carries the ignore lines', () => {
     it('writes them into map.json', async () => {
+        const ring = (x0: number, y0: number, x1: number, y1: number) =>
+            [{x: x0, y: y0}, {x: x1, y: y0}, {x: x1, y: y1}, {x: x0, y: y1}];
+        const kept = {shrunk: ring(4.3, 4.3, 5.7, 5.7), original: ring(4, 4, 6, 6)};
+        const stale = {shrunk: ring(9, 9, 10, 10), original: ring(8, 8, 11, 11)};
         const line = {name: 'Hedge', polyline: {points: [{x: 0, y: 0, z: 0}, {x: 2, y: 0, z: 0}]}, width_m: 0.4, id: 9};
         let blob: Blob | undefined;
         const createObjectURL = vi.fn((b: Blob) => { blob = b; return 'blob:x'; });
@@ -97,7 +103,13 @@ describe('useMapFiles backup carries the ignore lines', () => {
         const hook = renderHook(() => useMapFiles({
             features: {},
             setFeatures: vi.fn(),
-            map: {working_area: [], navigation_areas: []},
+            map: {
+                working_area: [{
+                    name: 'A', area: {points: []}, is_navigation_area: false,
+                    obstacles: [{points: [{x: 4.3, y: 4.3, z: 0}, {x: 5.7, y: 4.3, z: 0}, {x: 5.7, y: 5.7, z: 0}, {x: 4.3, y: 5.7, z: 0}]}],
+                }],
+                navigation_areas: [],
+            },
             setMap: vi.fn(),
             editMap: false,
             setEditMap: vi.fn(),
@@ -112,6 +124,8 @@ describe('useMapFiles backup carries the ignore lines', () => {
             buildFeaturesFromMap: vi.fn(),
             corridors: [line],
             restoreCorridors: vi.fn(),
+            obstacleOriginals: [kept, stale],
+            restoreObstacleOriginals: vi.fn(),
         }));
 
         hook.result.current.handleBackupMap();
@@ -120,6 +134,7 @@ describe('useMapFiles backup carries the ignore lines', () => {
         expect(saved.lidar_ignore_corridors).toEqual([
             {name: 'Hedge', polyline: line.polyline, width_m: 0.4},
         ]);
-        expect(saved.working_area).toEqual([]);
+        // only the record that still describes an obstacle of this map
+        expect(saved.obstacle_originals).toEqual([kept]);
     });
 });
