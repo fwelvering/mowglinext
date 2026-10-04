@@ -59,6 +59,7 @@ interface MapToolbarMobileProps {
     mowingAreas: MowingAreaItem[];
     onEditMap: () => void;
     onSaveMap: () => Promise<void>;
+    onRestoreBackup?: () => void;
     onUndo: () => void;
     onRedo: () => void;
     onToggleSatellite: () => void;
@@ -118,7 +119,7 @@ interface MapToolbarMobileProps {
 export const MapToolbarMobile = ({
     editMap, hasUnsavedChanges, manualMode, useSatellite,
     historyIndex, editHistoryLength, mowingAreas,
-    onEditMap, onSaveMap, onUndo, onRedo, onToggleSatellite,
+    onEditMap, onSaveMap, onRestoreBackup, onUndo, onRedo, onToggleSatellite,
     showObstacleClearance = false, onToggleObstacleClearance,
     onManualMode, onStopManualMode,
     onBackupMap, onRestoreMap, onDownloadGeoJSON, onUploadGeoJSON, onImportOpenMower, onResetMowingProgress,
@@ -261,6 +262,9 @@ export const MapToolbarMobile = ({
         },
         {type: "divider"},
         {key: "download", icon: <DownloadOutlined />, label: t("mapToolbarMobile.downloadGeojson")},
+        ...(editMap && onRestoreBackup
+            ? [{key: "restoreBackup", icon: <DatabaseOutlined />, label: t("mapBackups.menuItem")} satisfies NonNullable<MenuProps["items"]>[number]]
+            : []),
         ...(editMap
             ? [{key: "upload", icon: <UploadOutlined />, label: t("mapToolbarMobile.uploadGeojson")} satisfies NonNullable<MenuProps["items"]>[number]]
             : []),
@@ -293,6 +297,7 @@ export const MapToolbarMobile = ({
             case "resetMowingProgress": onResetMowingProgress(); break;
             case "download": onDownloadGeoJSON(); break;
             case "upload": onUploadGeoJSON(); break;
+            case "restoreBackup": onRestoreBackup?.(); break;
         }
     };
 
