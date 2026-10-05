@@ -475,6 +475,17 @@ def generate_launch_description() -> LaunchDescription:
                     robot_params.get("battery_manual_resume_percent", 30.0)
                 )
             },
+            # Charge-hold exit: besides battery_full_percent the charge current
+            # must have tapered to this (blackboard {battery_charge_tail_current_a}
+            # -> IsChargeCurrentBelow in both charge-wait loops). It was declared
+            # in behavior_tree_node.cpp and listed in the template, but never
+            # injected here, so an operator value silently never reached the node
+            # (found 2026-10-05: a 0.3 A setting would have left the robot at 0.08).
+            {
+                "battery_charge_tail_current_a": float(
+                    robot_params.get("battery_charge_tail_current_a", 0.08)
+                )
+            },
         ],
     )
 

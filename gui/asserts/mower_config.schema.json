@@ -927,6 +927,12 @@
           "default": 30.0,
           "description": "Floor for an operator-forced resume from the charger: pressing Play while the robot is charging mid-session resumes mowing only above this percentage. Must be greater than Low Percent or the robot re-docks within minutes."
         },
+        "battery_charge_tail_current_a": {
+          "type": "number",
+          "title": "Charge Tail Current",
+          "default": 0.08,
+          "description": "After a mid-session recharge the robot only resumes once the charge current has dropped to this value [A], on top of reaching Full Percent. Pack voltage under charge reads well above the true state of charge, so percent alone would send it out too early. A higher value resumes earlier with a slightly less full pack; the default matches the firmware's own end-of-charge current."
+        },
         "max_charge_voltage": {
           "type": "number",
           "title": "Max Charge Voltage",
