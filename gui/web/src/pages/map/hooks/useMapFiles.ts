@@ -38,16 +38,16 @@ interface UseMapFilesOptions {
     // message. Needed by handleRestoreMap because the MapPage effect that
     // normally does this is intentionally skipped while editMap is true.
     buildFeaturesFromMap: (m: MapType) => Record<string, MowingFeature>;
+    // Outlines obstacles had before the recorded-obstacle shrink (kept in the
+    // GUI config store): without them a restored map could not undo a shrink.
+    obstacleOriginals: ObstacleOriginal[];
+    restoreObstacleOriginals: (next: ObstacleOriginal[]) => Promise<void>;
     // The operator-drawn LiDAR-ignore lines. They live in map_server, not in the
     // Map message, so the backup file carries them separately and a restore
     // writes them back through restoreCorridors (applied immediately, like every
     // other ignore-line change; Cancel reverts them with the edit session).
     corridors: LidarIgnoreCorridor[];
     restoreCorridors: (next: LidarIgnoreCorridor[]) => Promise<void>;
-    // Outlines obstacles had before the recorded-obstacle shrink (kept in the
-    // GUI config store): without them a restored map could not undo a shrink.
-    obstacleOriginals: ObstacleOriginal[];
-    restoreObstacleOriginals: (next: ObstacleOriginal[]) => Promise<void>;
 }
 
 export function useMapFiles({
@@ -65,10 +65,10 @@ export function useMapFiles({
     dockDirty,
     setDockDirty,
     buildFeaturesFromMap,
-    corridors,
-    restoreCorridors,
     obstacleOriginals,
     restoreObstacleOriginals,
+    corridors,
+    restoreCorridors,
 }: UseMapFilesOptions) {
     const {t} = useTranslation();
 
@@ -248,13 +248,13 @@ export function useMapFiles({
         a.style.display = "none";
         const json = JSON.stringify({
                 ...map,
-                [BACKUP_CORRIDORS_KEY]: corridors.map(({name, polyline, width_m}) => ({name, polyline, width_m})),
                 // Only the records that still describe an obstacle on this map.
                 [BACKUP_ORIGINALS_KEY]: originalsForObstacles(
                     obstacleOriginals,
                     (map?.working_area ?? []).flatMap((a) => (a.obstacles ?? []).map(
                         (o) => (o.points ?? []).map((p) => ({x: p.x ?? 0, y: p.y ?? 0})))),
                 ),
+                [BACKUP_CORRIDORS_KEY]: corridors.map(({name, polyline, width_m}) => ({name, polyline, width_m})),
             }),
             blob = new Blob([json], {type: "octet/stream"}),
             url = window.URL.createObjectURL(blob);

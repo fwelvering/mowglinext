@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sync"
@@ -24,6 +26,26 @@ import (
 // wsWriteTimeout bounds a single WebSocket write. A frozen/slow client must not
 // block a delivery goroutine forever; on timeout the connection is closed.
 const wsWriteTimeout = 5 * time.Second
+
+func compactCoveragePreview(obj interface{}) {
+	message, ok := obj.(map[string]interface{})
+	if !ok {
+		return
+	}
+	coordinates, ok := message["xy"].([]interface{})
+	if !ok {
+		return
+	}
+	compact := make([]float32, len(coordinates))
+	for i, coordinate := range coordinates {
+		value, ok := coordinate.(float64)
+		if !ok {
+			return
+		}
+		compact[i] = float32(value)
+	}
+	message["xy"] = compact
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize: 1024,
@@ -309,12 +331,39 @@ func PublisherRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 	})
 }
 
+// compactMultiplexNumbers preserves JavaScript Number semantics: the browser's
+// MessagePack decoder returns BigInt for int64/uint64, so leave larger numbers
+// and signed zero as float64. json.Unmarshal owns these maps and slices.
+func compactMultiplexNumbers(value any) any {
+	switch v := value.(type) {
+	case float64:
+		if v == 0 && math.Signbit(v) {
+			return v
+		}
+		if v >= math.MinInt32 && v <= math.MaxUint32 && math.Trunc(v) == v {
+			if v < 0 {
+				return int32(v)
+			}
+			return uint32(v)
+		}
+	case []any:
+		for i := range v {
+			v[i] = compactMultiplexNumbers(v[i])
+		}
+	case map[string]any:
+		for key, item := range v {
+			v[key] = compactMultiplexNumbers(item)
+		}
+	}
+	return value
+}
+
 // MultiplexRoute multiplexes any number of topic subscriptions over one
 // WebSocket so a single browser tab does not need ~25 simultaneous TCP
 // connections. Wire format:
 //
-//	client → server: {"op": "subscribe"|"unsubscribe", "topic": "<key>"}
-//	server → client: {"topic": "<key>", "data": "<base64>"}
+//	client → server: JSON {"op": "subscribe"|"unsubscribe", "topic": "<key>"}
+//	server → client: MessagePack {"topic": "<key>", "data": <decoded object>}
 //
 // Per-topic throttling reuses topicSubscribeInterval. Unknown topics are
 // ignored. On disconnect, all live subscriptions are released.
@@ -351,9 +400,20 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			if err := json.Unmarshal(data, &obj); err != nil {
 				return
 			}
-			payload, err := msgpack.Marshal(map[string]interface{}{
+			// JSON numbers arrive as float64, including each OccupancyGrid
+			// cell. Only compact numbers that the browser decodes as Number:
+			// MessagePack int64/uint64 decode as BigInt in msgpackr.
+			// Keep the compact plan's coordinate array as MessagePack float32
+			// (generic JSON decoding otherwise widens every number to float64).
+			if topic == "path" {
+				compactCoveragePreview(obj)
+			}
+			var payload bytes.Buffer
+			encoder := msgpack.NewEncoder(&payload)
+			encoder.UseCompactInts(true)
+			err := encoder.Encode(map[string]interface{}{
 				"topic": topic,
-				"data":  obj,
+				"data":  compactMultiplexNumbers(obj),
 			})
 			if err != nil {
 				return
@@ -367,7 +427,7 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			// timeout/error, close the conn so the read loop unblocks and the
 			// deferred cleanup releases all subscriptions.
 			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
-			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+			if err := conn.WriteMessage(websocket.BinaryMessage, payload.Bytes()); err != nil {
 				_ = conn.Close()
 			}
 		}
@@ -628,20 +688,6 @@ func ServiceRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 				c.JSON(200, map[string]interface{}{"message": promoteRes.Message})
 				return
 			}
-		case "get_lidar_ignore_corridors":
-			var res mowgli.GetLidarIgnoreCorridorsRes
-			err = provider.CallService(ctx,
-				"/map_server_node/get_lidar_ignore_corridors",
-				&struct{}{},
-				&res,
-				"mowgli_interfaces/srv/GetLidarIgnoreCorridors")
-			if err == nil {
-				if res.Corridors == nil {
-					res.Corridors = []mowgli.LidarIgnoreCorridor{}
-				}
-				c.JSON(200, res)
-				return
-			}
 		case "preview_obstacle_clearance":
 			// Read-only: buffers each obstacle polygon outward by the LIVE
 			// obstacle_margin coverage_server is actually planning with
@@ -698,6 +744,20 @@ func ServiceRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 					correctRes.Corrected.Points = []geometry.Point32{}
 				}
 				c.JSON(200, correctRes)
+				return
+			}
+		case "get_lidar_ignore_corridors":
+			var res mowgli.GetLidarIgnoreCorridorsRes
+			err = provider.CallService(ctx,
+				"/map_server_node/get_lidar_ignore_corridors",
+				&struct{}{},
+				&res,
+				"mowgli_interfaces/srv/GetLidarIgnoreCorridors")
+			if err == nil {
+				if res.Corridors == nil {
+					res.Corridors = []mowgli.LidarIgnoreCorridor{}
+				}
+				c.JSON(200, res)
 				return
 			}
 		case "set_lidar_ignore_corridors":

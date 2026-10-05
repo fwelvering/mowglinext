@@ -1,3 +1,4 @@
+import {formatArea} from "../utils/areaLabel.ts";
 import {mowingAreaIndexById} from "../utils/mapAreaIndex.ts";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import {useApi} from "../hooks/useApi.ts";
@@ -38,14 +39,15 @@ import {AreasListPanel} from "./map/components/AreasListPanel.tsx";
 import {TrackedObstaclesPanel} from "./map/components/TrackedObstaclesPanel.tsx";
 import {ObstacleProposalsPanel} from "./map/components/ObstacleProposalsPanel.tsx";
 import {CORRIDOR_COLOR, LidarCorridorsPanel} from "./map/components/LidarCorridorsPanel.tsx";
-
-// Distinct from CORRIDOR_COLOR (pink) and the red drawn-obstacle fill, so the
-// toggleable clearance-preview outline is never mistaken for either.
-const OBSTACLE_CLEARANCE_PREVIEW_COLOR = '#faad14';
 import {EditLidarCorridorModal} from "./map/components/EditLidarCorridorModal.tsx";
 import {DEFAULT_CORRIDOR_WIDTH_M, useLidarCorridors} from "./map/hooks/useLidarCorridors.ts";
-import {useObstacleClearancePreview} from "./map/hooks/useObstacleClearancePreview.ts";
 import {buildCorridorSideRuns, dropLiveVertex, simplifyPolyline, smoothPolyline, type XY} from "./map/utils/corridorGeometry.ts";
+import {useObstacleClearancePreview} from "./map/hooks/useObstacleClearancePreview.ts";
+import {calculateMapViewportBounds} from "./map/utils/mapViewport.ts";
+
+// Distinct from the red drawn-obstacle fill, so the toggleable
+// clearance-preview outline is never mistaken for it.
+const OBSTACLE_CLEARANCE_PREVIEW_COLOR = '#faad14';
 import {extractObstacleProposals, isDigProposal} from "./map/utils/obstacleProposals.ts";
 import {MapOffsetPanel} from "./map/components/MapOffsetPanel.tsx";
 import {MapImageMarker} from "./map/components/MapImageMarker.tsx";
@@ -78,7 +80,7 @@ const DYN_OBSTACLE_INTERACTIVE_LAYERS = ['dyn-obstacle-fill'];
 
 export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const {notification} = App.useApp();
-    const {t} = useTranslation();
+    const {t, i18n} = useTranslation();
     const {colors, displayMode} = useThemeMode();
     const isMobile = useIsMobile();
     const mowerAction = useMowerAction()
@@ -108,6 +110,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     const {config, setConfig} = useConfig(["gui.map.offset.x", "gui.map.offset.y", "gui.map.display.bearing", "gui.map.mower.appearance", "gui.map.dock.appearance"])
     const envs = useEnv()
     const guiApi = useApi()
+    const obstacleOriginals = useObstacleOriginals();
     const [tileUri, setTileUri] = useState<string | undefined>()
     const [editMap, setEditMap] = useState<boolean>(false)
     // Shared hover/selection link between the tracked-obstacles panel and the
@@ -168,7 +171,6 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
     // operator is editing (there is no side panel to hold the width field there).
     const [corridorWidthModalIndex, setCorridorWidthModalIndex] = useState<number | null>(null);
     const lidarCorridors = useLidarCorridors();
-    const obstacleOriginals = useObstacleOriginals();
     const mapBackups = useMapBackups();
     const [restoreBackupOpen, setRestoreBackupOpen] = useState(false);
     // Snapshot of the corridor list taken the moment map-edit mode is
@@ -392,18 +394,18 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         />
         : null;
 
-    // Compute map bounds for the Mapbox viewport — depends on map data for centering
+    // Fit every configured area. The helper also expands the metric extents for
+    // the saved bearing because Mapbox fits north-up before onMapLoad restores
+    // rotation; without that compensation, rotated gardens can be clipped.
     const [map_ne, map_sw] = useMemo<[[number, number], [number, number]]>(() => {
         if (_datumLon == 0 || _datumLat == 0) {
             return [[0, 0], [0, 0]]
         }
-        const map_center = (map && map.map_center_y && map.map_center_x) ? transpose(offsetX, offsetY, datum, map.map_center_y, map.map_center_x) : [_datumLon, _datumLat]
-        // Use map center as datum for bounds calculation
-        const centerDatum: [number, number, number] = [map_center[1], map_center[0], 0]
-        const map_sw = transpose(0, 0, centerDatum, -((map?.map_height ?? 10) / 2), -((map?.map_width ?? 10) / 2))
-        const map_ne = transpose(0, 0, centerDatum, ((map?.map_height ?? 10) / 2), ((map?.map_width ?? 10) / 2))
+        const bounds = calculateMapViewportBounds(map, bearing);
+        const map_sw = transpose(offsetX, offsetY, datum, bounds.minY, bounds.minX)
+        const map_ne = transpose(offsetX, offsetY, datum, bounds.maxY, bounds.maxX)
         return [map_ne, map_sw]
-    }, [_datumLat, _datumLon, map, offsetX, offsetY, datum])
+    }, [_datumLat, _datumLon, map, offsetX, offsetY, datum, bearing])
 
     const {
         hasUnsavedChanges, setHasUnsavedChanges, handleEditMap, exitEditMode,
@@ -548,48 +550,24 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                 newFeatures["dock"] = new DockFeatureBase(dock_lonlat, map.dock_heading);
             }
         }
-        if (path?.poses) {
-            // Coverage plan: the full F2C route (headland rings + every swath)
-            // for the current area (/coverage/full_plan, a nav_msgs/Path).
-            // Execution is swath-by-swath, but this shows the whole plan.
-            // Rendered green so it reads distinctly from the transit plan below.
-            //
-            // full_path is the CONCATENATION of the drivable sub-paths; the
-            // jump between two sub-paths is never driven directly (the BT
-            // bridges it with an obstacle-avoiding Nav2 transit), so break the
-            // polyline at large gaps — drawing them as one line paints fake
-            // straight "routes" through the very obstacles the sub-path split
-            // exists to avoid.
-            const SUBPATH_GAP_M = 0.75;
-            let segment: Position[] = [];
-            let segmentIdx = 0;
-            let prev: { x: number; y: number } | null = null;
-            const flushSegment = () => {
+        if (path?.xy && path.subpath_offsets?.length) {
+            // The backend sends interleaved float32 XY and exact point-index
+            // boundaries, so no giant Path/pose objects or gap heuristics.
+            const offsets = path.subpath_offsets;
+            for (let segmentIdx = 0; segmentIdx + 1 < offsets.length; segmentIdx++) {
+                const start = offsets[segmentIdx], end = offsets[segmentIdx + 1];
+                if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > path.xy.length / 2 || end - start < 2) continue;
+                const segment: Position[] = [];
+                for (let i = start; i < end; i++) {
+                    const x = path.xy[i * 2], y = path.xy[i * 2 + 1];
+                    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+                    segment.push(transpose(offsetX, offsetY, datum, y, x));
+                }
                 if (segment.length > 1) {
-                    const feature = new PathFeature(
-                        `coverage-path-${segmentIdx}`, segment, LAYER_COLORS.coveragePath, 2);
-                    newFeatures[feature.id] = feature
-                    segmentIdx += 1;
+                    const feature = new PathFeature(`coverage-path-${segmentIdx}`, segment, LAYER_COLORS.coveragePath, 2);
+                    newFeatures[feature.id] = feature;
                 }
-                segment = [];
-            };
-            for (const pose of path.poses) {
-                const x = pose.pose?.position?.x;
-                const y = pose.pose?.position?.y;
-                // A pose without coordinates cannot be drawn — break the
-                // polyline there rather than feeding NaN into transpose().
-                if (x === undefined || y === undefined) {
-                    flushSegment();
-                    prev = null;
-                    continue;
-                }
-                if (prev && Math.hypot(x - prev.x, y - prev.y) > SUBPATH_GAP_M) {
-                    flushSegment();
-                }
-                segment.push(transpose(offsetX, offsetY, datum, y, x));
-                prev = { x, y };
             }
-            flushSegment();
         }
         if (plan?.poses) {
             const coordinates = plan.poses.flatMap((pose) => {
@@ -703,7 +681,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             const areaIndex = mowingAreaIndexById(map, workareas[i].properties.source_working_area_id);
             if (areaIndex === undefined) continue;
             names[areaIndex] = workareas[i].getLabel(
-                t('mapAreasList.unnamedArea', {order: workareas[i].getMowingOrder()})
+                t('mapAreasList.unnamedArea', {index: workareas[i].getMowingOrder()})
             );
         }
         return names;
@@ -766,13 +744,11 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
             })
             .map((f, i, arr) => {
                 const areaSqm = turfArea(f);
-                const areaLabel = areaSqm >= 10000
-                    ? `${(areaSqm / 10000).toFixed(2)} ha`
-                    : `${areaSqm.toFixed(0)} m²`;
+                const areaLabel = formatArea(areaSqm, i18n.language);
                 const ftype = f.properties.feature_type;
                 let name = '';
                 if (f instanceof MowingAreaFeature) {
-                    name = f.getLabel(t('mapAreasList.unnamedArea', {order: f.getMowingOrder()}));
+                    name = f.getLabel(t('mapAreasList.unnamedArea', {index: f.getMowingOrder()}));
                 } else if (f instanceof NavigationFeature) {
                     // Short 1-based ordinal within its own type, not the raw id.
                     const navIdx = arr.slice(0, i).filter(x => x instanceof NavigationFeature).length + 1;
@@ -897,10 +873,10 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         dockDirty,
         setDockDirty,
         buildFeaturesFromMap,
-        corridors: lidarCorridors.corridors,
-        restoreCorridors: lidarCorridors.save,
         obstacleOriginals: obstacleOriginals.records,
         restoreObstacleOriginals: obstacleOriginals.replaceAll,
+        corridors: lidarCorridors.corridors,
+        restoreCorridors: lidarCorridors.save,
     });
 
 
@@ -922,6 +898,14 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [dockPlacementMode]);
 
+    // All drawn obstacle polygons, for the toggleable clearance-preview
+    // overlay below. Memoised so useObstacleClearancePreview's own content
+    // signature stays stable across unrelated re-renders.
+    const obstacleFeaturesList = useMemo(
+        (): ObstacleFeature[] => Object.values(features).filter((f): f is ObstacleFeature => f instanceof ObstacleFeature),
+        [features],
+    );
+    const obstacleClearancePreview = useObstacleClearancePreview(obstacleFeaturesList, datum, offsetX, offsetY);
 
     // The gl-draw feature currently being drawn for a corridor: it is added to
     // gl-draw's OWN store the instant draw_line_string mode starts (onSetup)
@@ -1187,15 +1171,6 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         recordedAreaRings.some((ring) => isRingInsidePolygon([[lng, lat]], ring)),
     [recordedAreaRings]);
 
-    // All drawn obstacle polygons, for the toggleable clearance-preview
-    // overlay below. Memoised so useObstacleClearancePreview's own content
-    // signature stays stable across unrelated re-renders.
-    const obstacleFeaturesList = useMemo(
-        (): ObstacleFeature[] => Object.values(features).filter((f): f is ObstacleFeature => f instanceof ObstacleFeature),
-        [features],
-    );
-    const obstacleClearancePreview = useObstacleClearancePreview(obstacleFeaturesList, datum, offsetX, offsetY);
-
     // The actual ignored BAND (width_m wide), not just the centerline the
     // operator clicked — so it's visible on the map exactly what area gets
     // an ignore, not only where. Shown in both view and edit mode (DrawControl
@@ -1309,7 +1284,6 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
         onEmergencyOn: mowerAction("emergency", {Emergency: 1}),
         onEmergencyOff: mowerAction("emergency", {Emergency: 0}),
         onAreaRecording: mowerAction("high_level_control", {Command: 3}),
-        onMowNextArea: mowerAction("high_level_control", {Command: 4}),
         // Match MapToolbar's isIdle: the BT publishes IDLE_DOCKED as the
         // primary resting state; "IDLE" without a suffix only appears as the
         // manual-mow fallthrough. There is no "pause flag" in the stack (the
@@ -1382,6 +1356,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                                          initialViewState={{
                                                              bounds: [{lng: map_sw[0], lat: map_sw[1]}, {lng: map_ne[0], lat: map_ne[1]}],
                                                              bearing,
+                                                             fitBoundsOptions: {padding: 16},
                                                          }}
                                                          style={{width: '100%', height: '100%'}}
                                                          mapStyle={useSatellite ? "mapbox://styles/mapbox/satellite-streets-v12" : "mapbox://styles/mapbox/dark-v11"}
@@ -1560,6 +1535,7 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                                          initialViewState={{
                                                              bounds: [{lng: map_sw[0], lat: map_sw[1]}, {lng: map_ne[0], lat: map_ne[1]}],
                                                              bearing,
+                                                             fitBoundsOptions: {padding: 24},
                                                          }}
                                                          style={{width: '100%', height: '100%'}}
                                                          mapStyle={useSatellite ? "mapbox://styles/mapbox/satellite-streets-v12" : "mapbox://styles/mapbox/dark-v11"}
@@ -1681,6 +1657,17 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                     {dockForegroundMarker}
                     {/* PENDING obstacle proposals (dig reports): dashed, never a real keepout */}
                     {renderProposalLayers()}
+                    {/* Toggleable preview (off by default) of the LIVE obstacle_margin
+                        buffer coverage_server actually plans against — a distinct
+                        dashed amber outline so it is never mistaken for the drawn
+                        obstacle polygon itself. */}
+                    {obstacleClearancePreview.enabled && (
+                        <Source type={"geojson"} id={"obstacle-clearance-preview"} data={obstacleClearancePreview.features}>
+                            <Layer type={"line"} id={"obstacle-clearance-preview-line"}
+                                layout={{'line-cap': 'round', 'line-join': 'round'}}
+                                paint={{'line-color': OBSTACLE_CLEARANCE_PREVIEW_COLOR, 'line-width': 2, 'line-dasharray': [1, 1.5]}}/>
+                        </Source>
+                    )}
                     {/* The actual ignored band (width_m), under everything else so the
                         centerline / vertex handles / draft points stay legible on top.
                         A narrow band (the default is 0.2 m) can rasterize to a
@@ -1707,17 +1694,6 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                             layout={{'line-cap': 'round', 'line-join': 'round'}}
                             paint={{'line-color': CORRIDOR_COLOR, 'line-width': 4, 'line-dasharray': [2, 1]}}/>
                     </Source>
-                    {/* Toggleable preview (off by default) of the LIVE obstacle_margin
-                        buffer coverage_server actually plans against — a distinct
-                        dashed amber outline so it is never mistaken for the drawn
-                        obstacle polygon itself. */}
-                    {obstacleClearancePreview.enabled && (
-                        <Source type={"geojson"} id={"obstacle-clearance-preview"} data={obstacleClearancePreview.features}>
-                            <Layer type={"line"} id={"obstacle-clearance-preview-line"}
-                                layout={{'line-cap': 'round', 'line-join': 'round'}}
-                                paint={{'line-color': OBSTACLE_CLEARANCE_PREVIEW_COLOR, 'line-width': 2, 'line-dasharray': [1, 1.5]}}/>
-                        </Source>
-                    )}
                     {/* fusion_graph's LiDAR anchor map (walls as ink, scanned ground as a faint wash). */}
                     {lidarMapImage && (
                         <Source type={"image"} id={"lidar-map"} url={lidarMapImage.url} coordinates={lidarMapImage.coordinates}>

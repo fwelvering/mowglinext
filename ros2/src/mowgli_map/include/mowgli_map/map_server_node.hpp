@@ -901,8 +901,9 @@ private:
   ///
   /// This was a LETHAL band in an earlier version of this change and was
   /// reworked to mid-cost after review: lethal here collides with
-  /// chassis_safety_inset (both default to 0.20 m — the outermost coverage
-  /// ring is planned exactly chassis_safety_inset inside the line, so a
+  /// chassis_safety_inset (the outermost coverage ring is planned exactly
+  /// chassis_safety_inset inside the line — ON it at the 0.0 default, 0.20 m
+  /// until 2026-09-16 — so a
   /// lethal band there plus inflation_radius would swallow the ring itself
   /// and reopen the START_OCCUPIED skip cascade, issue #487) and would also
   /// wall off any area-to-area seam narrower than 2x the inflated margin.
@@ -1042,6 +1043,18 @@ private:
   /// different area, even across a clear, in case something external
   /// still holds a reference to the old one.
   uint32_t next_area_id_{1};
+
+  /// Operator-drawn LiDAR-ignore lines — see LidarIgnoreCorridorEntry's doc
+  /// comment. Independent of areas_: not classified, not part of any
+  /// keepout mask, never touches masks_dirty_/classification_dirty_ — the
+  /// ONLY consumer is costmap_scan_filter_node, over
+  /// lidar_ignore_corridors_pub_.
+  std::vector<LidarIgnoreCorridorEntry> lidar_ignore_corridors_;
+
+  /// Next id to mint for a new corridor — same contract as next_area_id_
+  /// (persisted in areas.dat, recovered on load as max(loaded ids) + 1,
+  /// never reset by ~/clear_map or ~/clear_lidar_ignore_corridors).
+  uint32_t next_lidar_corridor_id_{1};
 
   /// Bumped on every successful ~/add_area (mowglinext#637 phase 2) and
   /// published on area_list_generation_pub_ (transient_local — a late
@@ -1262,6 +1275,17 @@ private:
   // Docking pose publisher (transient_local so late subscribers get the last value)
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr docking_pose_pub_;
 
+  /// Full current corridor list, transient_local — costmap_scan_filter_node's
+  /// only input for the corridor filter. Same "always latest, no service
+  /// round-trip needed" shape as keepout_mask_pub_.
+  rclcpp::Publisher<mowgli_interfaces::msg::LidarIgnoreCorridorArray>::SharedPtr
+      lidar_ignore_corridors_pub_;
+  /// Full current set of recorded (working + navigation) area outer
+  /// boundaries, transient_local — costmap_scan_filter_node's input for the
+  /// LiDAR-ignore-corridor area-side restriction. Same "always latest, no
+  /// service round-trip" shape as lidar_ignore_corridors_pub_ above.
+  rclcpp::Publisher<mowgli_interfaces::msg::RecordedAreaPolygonArray>::SharedPtr
+      recorded_area_polygons_pub_;
   /// Area-list generation counter (mowglinext#637 phase 2) — see
   /// area_list_generation_'s doc comment. transient_local so a subscriber
   /// started after the last bump (e.g. behavior_tree_node on its own

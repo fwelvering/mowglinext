@@ -591,6 +591,7 @@ void MapServerNode::on_add_area(const mowgli_interfaces::srv::AddMowingArea::Req
   }
 
   res->success = true;
+  publish_recorded_area_polygons();
   // mowglinext#637 phase 2: the area list changed (one entry added — this is
   // also how the GUI's clear+re-add edit/delete flow adds every SURVIVING
   // area back, so an untouched area's own re-add counts as a change too, not
@@ -600,6 +601,24 @@ void MapServerNode::on_add_area(const mowgli_interfaces::srv::AddMowingArea::Req
   // poll or re-probe speculatively.
   bump_area_list_generation();
   publish_recorded_area_polygons();
+}
+
+void MapServerNode::publish_recorded_area_polygons()
+{
+  mowgli_interfaces::msg::RecordedAreaPolygonArray msg;
+  msg.header.stamp = get_clock()->now();
+  msg.header.frame_id = "map";
+  {
+    std::lock_guard<std::mutex> lock(map_mutex_);
+    msg.areas.reserve(areas_.size());
+    for (const auto& area : areas_)
+    {
+      mowgli_interfaces::msg::RecordedAreaPolygon entry;
+      entry.area = area.polygon;
+      msg.areas.push_back(std::move(entry));
+    }
+  }
+  recorded_area_polygons_pub_->publish(msg);
 }
 
 void MapServerNode::bump_area_list_generation()

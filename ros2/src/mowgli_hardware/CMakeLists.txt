@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.22.1)
 project(mowgli_hardware)
 
 # ---------------------------------------------------------------------------
@@ -198,6 +198,16 @@ if(BUILD_TESTING)
     test/test_blade_gate.cpp
   )
   target_include_directories(test_blade_gate
+    PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
+
+  # ---- test_blade_reassert ----
+  # Header-only pure logic (blade_reassert.hpp), same as test_blade_gate.
+  ament_add_gtest(test_blade_reassert
+    test/test_blade_reassert.cpp
+  )
+  target_include_directories(test_blade_reassert
     PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   )

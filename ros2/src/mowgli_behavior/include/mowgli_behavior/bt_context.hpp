@@ -492,18 +492,6 @@ struct BTContext
   /// Cleared by EndSession.
   std::vector<FailedTransitTarget> session_failed_transit_targets;
 
-  /// Set when FollowStrip's swath-completion bookkeeping reported an area
-  /// fully mowed, but the mow_progress cross-check found the actually-
-  /// stamped interior fraction below mowgli_behavior::kMinPlausibleMowedFraction
-  /// (mow_coverage_plausibility.hpp) — issue #680: the robot drove only the
-  /// headland ring, reported clean success, and nothing told the operator.
-  /// Folded into HighLevelStatus.sub_state_name as "COVERAGE_INCOMPLETE" by
-  /// withLiveStatusFields (status_snapshot.cpp). Deliberately NOT auto-
-  /// cleared on the next area's completion — a warning from earlier in the
-  /// session must survive to the final report, not just flash briefly.
-  /// Cleared by EndSession so the next COMMAND_START starts without a stale
-  /// warning from a previous, unrelated session.
-  bool coverage_plausibility_warning{false};
 
   // -----------------------------------------------------------------------
   // Area re-index safety (mowglinext#637 phase 2)
@@ -546,6 +534,19 @@ struct BTContext
   /// in processResponse. Not persisted — a fresh boot starts empty, which is
   /// safe: nothing is trusted as verified until actually probed again.
   std::map<uint32_t, uint64_t> area_verified_generation;
+
+  /// Set when FollowStrip's swath-completion bookkeeping reported an area
+  /// fully mowed, but the mow_progress cross-check found the actually-
+  /// stamped interior fraction below mowgli_behavior::kMinPlausibleMowedFraction
+  /// (mow_coverage_plausibility.hpp) — issue #680: the robot drove only the
+  /// headland ring, reported clean success, and nothing told the operator.
+  /// Folded into HighLevelStatus.sub_state_name as "COVERAGE_INCOMPLETE" by
+  /// withLiveStatusFields (status_snapshot.cpp). Deliberately NOT auto-
+  /// cleared on the next area's completion — a warning from earlier in the
+  /// session must survive to the final report, not just flash briefly.
+  /// Cleared by EndSession so the next COMMAND_START starts without a stale
+  /// warning from a previous, unrelated session.
+  bool coverage_plausibility_warning{false};
 
   /// Filesystem path the coverage RESUME state (the four maps above +
   /// completed_areas + current_area) is persisted to, so an interrupted session
