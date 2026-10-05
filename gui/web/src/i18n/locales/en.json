@@ -2747,7 +2747,9 @@
     "criticalRecovery": "Critical Recovery",
     "criticalRecoveryTooltip": "Leave the critical-battery state once recharged above this %. Hysteresis upper bound, must be greater than Critical.",
     "manualResume": "Manual Resume",
-    "manualResumeTooltip": "Pressing Play while the robot is charging mid-session resumes mowing only above this %. Must be greater than Low (Dock) or the robot re-docks within minutes."
+    "manualResumeTooltip": "Pressing Play while the robot is charging mid-session resumes mowing only above this %. Must be greater than Low (Dock) or the robot re-docks within minutes.",
+    "chargeTail": "Charge Tail Current",
+    "chargeTailTooltip": "After a mid-session recharge the robot resumes only once the charge current has dropped to this value (A), as well as reaching Full %. Higher resumes earlier with a slightly less full pack. Default 0.08 A matches the firmware's end-of-charge current."
   },
   "settingsSafety": {
     "alertMessage": "Safety settings protect the robot and its surroundings",
