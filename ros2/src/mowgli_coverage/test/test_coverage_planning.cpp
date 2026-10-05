@@ -404,6 +404,8 @@ TEST(CoveragePlanning, SwathsAreSpreadEvenlyWhenTheRemainderIsOverHalfALane)
   {
     EXPECT_LE(lanes[i] - lanes[i - 1], kOpWidth + 1e-6)
         << "gap between lanes " << i - 1 << "→" << i;
+  }
+}
 
 // AUTO angle (mow_angle_deg < 0) on a field BELOW kAutoAngleMaxAreaM2 (400 m²)
 // runs the EXHAUSTIVE f2c::sg::BruteForce::generateBestSwaths search —
@@ -441,7 +443,6 @@ TEST(CoveragePlanning, AutoAngleSmallFieldIsDeterministic)
     EXPECT_NEAR(a.swaths[i].first.second, b.swaths[i].first.second, 1e-9) << "swath " << i;
     EXPECT_NEAR(a.swaths[i].second.first, b.swaths[i].second.first, 1e-9) << "swath " << i;
     EXPECT_NEAR(a.swaths[i].second.second, b.swaths[i].second.second, 1e-9) << "swath " << i;
-
   }
 }
 
