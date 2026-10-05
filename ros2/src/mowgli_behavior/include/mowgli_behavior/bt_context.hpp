@@ -492,7 +492,6 @@ struct BTContext
   /// Cleared by EndSession.
   std::vector<FailedTransitTarget> session_failed_transit_targets;
 
-
   // -----------------------------------------------------------------------
   // Area re-index safety (mowglinext#637 phase 2)
   // -----------------------------------------------------------------------
