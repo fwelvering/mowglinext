@@ -1070,18 +1070,6 @@ private:
   /// no way to know its cached flags might now describe a DIFFERENT area.
   uint64_t area_list_generation_{0};
 
-  /// Operator-drawn LiDAR-ignore lines — see LidarIgnoreCorridorEntry's doc
-  /// comment. Independent of areas_: not classified, not part of any
-  /// keepout mask, never touches masks_dirty_/classification_dirty_ — the
-  /// ONLY consumer is costmap_scan_filter_node, over
-  /// lidar_ignore_corridors_pub_.
-  std::vector<LidarIgnoreCorridorEntry> lidar_ignore_corridors_;
-
-  /// Next id to mint for a new corridor — same contract as next_area_id_
-  /// (persisted in areas.dat, recovered on load as max(loaded ids) + 1,
-  /// never reset by ~/clear_map or ~/clear_lidar_ignore_corridors).
-  uint32_t next_lidar_corridor_id_{1};
-
   /// Obstacle polygons: regions within the allowed areas that are off-limits
   /// (trees, flower beds, etc.). Marked as lethal in the keepout mask.
   /// Single source of truth: area YAML on disk + ~/promote_obstacle. Not
@@ -1292,17 +1280,6 @@ private:
   /// restart) still gets the current value without waiting for the next
   /// edit.
   rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr area_list_generation_pub_;
-  /// Full current corridor list, transient_local — costmap_scan_filter_node's
-  /// only input for the corridor filter. Same "always latest, no service
-  /// round-trip needed" shape as keepout_mask_pub_.
-  rclcpp::Publisher<mowgli_interfaces::msg::LidarIgnoreCorridorArray>::SharedPtr
-      lidar_ignore_corridors_pub_;
-  /// Full current set of recorded (working + navigation) area outer
-  /// boundaries, transient_local — costmap_scan_filter_node's input for the
-  /// LiDAR-ignore-corridor area-side restriction. Same "always latest, no
-  /// service round-trip" shape as lidar_ignore_corridors_pub_ above.
-  rclcpp::Publisher<mowgli_interfaces::msg::RecordedAreaPolygonArray>::SharedPtr
-      recorded_area_polygons_pub_;
 
   // ── Subscribers ───────────────────────────────────────────────────────────
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_sub_;

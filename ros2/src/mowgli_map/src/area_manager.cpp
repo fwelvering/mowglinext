@@ -600,7 +600,6 @@ void MapServerNode::on_add_area(const mowgli_interfaces::srv::AddMowingArea::Req
   // tell its cache might now describe a different area, without having to
   // poll or re-probe speculatively.
   bump_area_list_generation();
-  publish_recorded_area_polygons();
 }
 
 void MapServerNode::publish_recorded_area_polygons()
@@ -627,24 +626,6 @@ void MapServerNode::bump_area_list_generation()
   std_msgs::msg::UInt64 msg;
   msg.data = area_list_generation_;
   area_list_generation_pub_->publish(msg);
-}
-
-void MapServerNode::publish_recorded_area_polygons()
-{
-  mowgli_interfaces::msg::RecordedAreaPolygonArray msg;
-  msg.header.stamp = get_clock()->now();
-  msg.header.frame_id = "map";
-  {
-    std::lock_guard<std::mutex> lock(map_mutex_);
-    msg.areas.reserve(areas_.size());
-    for (const auto& area : areas_)
-    {
-      mowgli_interfaces::msg::RecordedAreaPolygon entry;
-      entry.area = area.polygon;
-      msg.areas.push_back(std::move(entry));
-    }
-  }
-  recorded_area_polygons_pub_->publish(msg);
 }
 
 void MapServerNode::on_get_mowing_area(

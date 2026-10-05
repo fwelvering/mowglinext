@@ -188,23 +188,6 @@ TEST(HighLevelStatusSnapshot, TransitingOverridesSubStateName)
   EXPECT_EQ(refreshed.sub_state_name, "TRANSIT");
 }
 
-// The common case: neither exception active must leave sub_state_name
-// exactly as PublishHighLevelStatus cached it (today always "", but the
-// projection must not assume that — it should carry whatever is there, not
-// blank it).
-TEST(HighLevelStatusSnapshot, NeitherOverrideCarriesCachedSubStateName)
-{
-  HighLevelStatus cached = chargingSnapshot();
-  cached.sub_state_name = "SOME_FUTURE_SUB_STATE";
-  BTContext ctx;
-  ctx.transiting = false;
-  ctx.coverage_plausibility_warning = false;
-
-  const HighLevelStatus refreshed = withLiveStatusFields(cached, ctx);
-
-  EXPECT_EQ(refreshed.sub_state_name, "SOME_FUTURE_SUB_STATE");
-}
-
 // ctx.coverage_plausibility_warning is the other deliberate exception:
 // issue #680's completion cross-check (FollowStrip::checkCoveragePlausibility,
 // coverage_nodes.cpp) can flip it mid-session, between tree ticks, so only
@@ -233,6 +216,23 @@ TEST(HighLevelStatusSnapshot, TransitingTakesPriorityOverThePlausibilityWarning)
   const HighLevelStatus refreshed = withLiveStatusFields(chargingSnapshot(), ctx);
 
   EXPECT_EQ(refreshed.sub_state_name, "TRANSIT");
+}
+
+// The common case: neither exception active must leave sub_state_name
+// exactly as PublishHighLevelStatus cached it (today always "", but the
+// projection must not assume that — it should carry whatever is there, not
+// blank it).
+TEST(HighLevelStatusSnapshot, NeitherOverrideCarriesCachedSubStateName)
+{
+  HighLevelStatus cached = chargingSnapshot();
+  cached.sub_state_name = "SOME_FUTURE_SUB_STATE";
+  BTContext ctx;
+  ctx.transiting = false;
+  ctx.coverage_plausibility_warning = false;
+
+  const HighLevelStatus refreshed = withLiveStatusFields(cached, ctx);
+
+  EXPECT_EQ(refreshed.sub_state_name, "SOME_FUTURE_SUB_STATE");
 }
 
 // A default-constructed context must not fabricate progress: the helper is a
