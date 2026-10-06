@@ -932,6 +932,15 @@ TEST_F(FollowStripDigTest, ResumeDoesNotCompleteEarlierUnitSkippedAfterTransitFa
                 },
                 5.0),
             BT::NodeStatus::RUNNING);
+  // The server has the goal, but FollowStrip only holds its goal handle after a
+  // later tick sees the accept. Halting before that persists nothing (the stale
+  // cursor of the previous run would stay), which made this test fail on slow
+  // CI runners. Give it a few ticks to accept, as the first phase does.
+  for (int i = 0; i < 6; ++i)
+  {
+    ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
   tree->haltTree();
   EXPECT_EQ(ctx->area_resume_pose_index.at(0), 0u);
 
