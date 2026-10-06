@@ -510,6 +510,8 @@
     "chargingThresholdTooltip": "Courant batterie (A) à partir duquel SimpleChargingDock considère la base atteinte. Plus élevé = le robot s'enfonce davantage dans les contacts avant de s'arrêter ; plus bas = s'arrête plus tôt. ~0,3 A donne un contact stable sur le chargeur YardForce.",
     "approachOvershoot": "Dépassement d'approche",
     "approachOvershootTooltip": "Distance (m) parcourue au-delà de la pose de la base pour bien enfoncer les contacts de charge. ~0,05 m compense le bruit RTK/bras de levier résiduel.",
+    "approachLateralOffset": "Décalage latéral d'approche",
+    "approachLateralOffsetTooltip": "Décale latéralement la ligne d'approche vers la base (m) : positif = gauche, négatif = droite, vu depuis la tondeuse qui entre. Seule l'approche bouge ; la pose enregistrée de la base reste là où la tondeuse se recharge. À utiliser quand quelque chose bloque l'approche d'un côté, comme le bord d'un garage. 0 = désactivé. Effectif après un redémarrage.",
     "baseHeadingUncertainty": "Incertitude du cap de la base",
     "baseHeadingUncertaintyTooltip": "Écart-type (rad) du cap de la base utilisé pour amorcer le graphe de fusion au contact de charge. Plus faible = on fait davantage confiance au cap calibré."
   },
@@ -2056,6 +2058,10 @@
     "dock_approach_overshoot": {
       "label": "Dépassement d'approche de la base",
       "description": "Distance supplémentaire parcourue au-delà de la pose de la base pour garantir le contact de charge."
+    },
+    "dock_approach_lateral_offset": {
+      "label": "Décalage latéral d'approche de la base",
+      "description": "Décale la ligne d'approche latéralement (positif = gauche) sans déplacer la pose enregistrée de la base."
     },
     "use_gps_dock_detection": {
       "label": "Détection GPS de la base",

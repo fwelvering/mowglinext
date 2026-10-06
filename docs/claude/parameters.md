@@ -250,6 +250,7 @@ All feed the xacro in `mowgli.launch.py:108–120`; `lidar_z`/`lidar_yaw`/`imu_y
 |---|---|---|---|---|
 | `dock_approach_distance` (L440) | 1.5 | staging distance | Docking | launch |
 | `dock_approach_overshoot` (L449) | 0.05 | forward shift of `home_dock.pose` L682–686 | Docking | launch |
+| `dock_approach_lateral_offset` | 0.0 | sideways shift (+ = left of the driving direction, clamped ±0.30 m) of `home_dock.pose` ONLY, via `robot_config_util.dock_approach_target` — never of the stored `dock_pose_x/y` (fusion_graph pins the fused pose onto those while charging) | Docking | launch |
 | `dock_max_retries` (L450) | 3 | `docking_server.max_retries` L669 | Docking | launch |
 | `dock_use_charger_detection` (L451) | `true` | `simple_charging_dock.use_battery_status` L697 | Docking | launch |
 | `dock_charging_threshold` (L455) | 0.3 | `simple_charging_dock.charging_threshold` L693 | Docking | launch |

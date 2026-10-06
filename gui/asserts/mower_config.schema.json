@@ -641,6 +641,12 @@
           "default": 0.05,
           "description": "Forward overshoot (metres) applied to the dock target along its yaw axis. opennav_docking drives toward dock_pose + overshoot * forward and stops at docking_threshold, putting firm contact on the cradle. 0 disables the shift."
         },
+        "dock_approach_lateral_offset": {
+          "type": "number",
+          "title": "Dock Approach Lateral Offset",
+          "default": 0.0,
+          "description": "Sideways trim (metres) of the dock approach target, positive = to the LEFT of the direction the robot drives in with, limited to +-0.30 m. It moves only the target the docking server aims at, never the stored dock pose that the localizer pins the robot to while charging. Use it when the approach line is blocked on one side (for example a garage edge over the dock). 0 disables the trim. Applied at launch: takes effect after a ROS2 restart."
+        },
         "dock_max_retries": {
           "type": "integer",
           "title": "Dock Max Retries",

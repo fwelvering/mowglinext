@@ -795,3 +795,45 @@ def derive_blade_load_params(enabled, rpm_full, rpm_min, min_speed_ratio):
         "blade_load_rpm_min": low,
         "blade_load_min_speed_ratio": ratio,
     }, warnings)
+
+
+# Largest sideways trim of the dock approach target [m]. A trim is a correction for
+# a few centimetres to a hand's breadth; anything larger means the stored dock pose
+# is wrong and should be re-recorded, and a typo (15 for 0.15) must not park the
+# approach line in the neighbour's garden.
+MAX_DOCK_APPROACH_LATERAL_OFFSET_M = 0.30
+
+
+def clamp_dock_approach_lateral_offset(lateral_offset):
+    """Clamp the operator's lateral trim to +-MAX_DOCK_APPROACH_LATERAL_OFFSET_M."""
+    return max(-MAX_DOCK_APPROACH_LATERAL_OFFSET_M,
+               min(MAX_DOCK_APPROACH_LATERAL_OFFSET_M, float(lateral_offset)))
+
+
+def dock_approach_target(dock_x, dock_y, dock_yaw, overshoot=0.0, lateral_offset=0.0):
+    """The pose opennav_docking is told to drive to (``home_dock.pose``).
+
+    Starts from the STORED dock pose and moves it
+
+      * ``overshoot`` metres FORWARD along the dock heading, so the robot pushes
+        past the calibrated pose and seats the charging contacts firmly, and
+      * ``lateral_offset`` metres SIDEWAYS, positive to the LEFT of the heading the
+        robot drives in with (the map is X=east, Y=north, so left of yaw is
+        ``(-sin yaw, cos yaw)``).
+
+    The lateral trim moves ONLY this approach target (and the staging pose
+    opennav_docking derives from it). It must never be applied to the stored
+    ``dock_pose_x/y``: while charging, fusion_graph pins the fused pose onto the
+    stored pose, so a stored pose that differs from where GPS puts the docked robot
+    makes the map marker walk away from the dock (field 2026-10-06).
+
+    Returns ``[x, y, yaw]``; the yaw is untouched.
+    """
+    lateral = clamp_dock_approach_lateral_offset(lateral_offset)
+    cos_yaw = math.cos(dock_yaw)
+    sin_yaw = math.sin(dock_yaw)
+    return [
+        dock_x + overshoot * cos_yaw - lateral * sin_yaw,
+        dock_y + overshoot * sin_yaw + lateral * cos_yaw,
+        dock_yaw,
+    ]

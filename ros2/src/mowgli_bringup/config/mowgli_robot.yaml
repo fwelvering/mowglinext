@@ -690,6 +690,13 @@ mowgli:
     # residual RTK / lever-arm noise. 5 cm matches docking_threshold
     # so a perfect-fusion robot stops exactly at the calibrated pose.
     dock_approach_overshoot: 0.05
+    # Sideways trim (m) of the dock APPROACH target, positive = LEFT of the
+    # direction the robot drives in with, clamped to +-0.30. Moves only the
+    # target opennav_docking aims at (and the staging pose derived from it) —
+    # NOT dock_pose_x/y, which fusion_graph pins the fused pose onto while
+    # charging. Use it when the approach line itself is blocked on one side
+    # (a garage edge over the dock); leave 0 otherwise. Needs a ROS2 restart.
+    dock_approach_lateral_offset: 0.0
     dock_max_retries: 3
     dock_use_charger_detection: true
     # Charging-current threshold (A) at which SimpleChargingDock considers

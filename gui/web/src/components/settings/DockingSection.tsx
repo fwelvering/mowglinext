@@ -131,6 +131,16 @@ export const DockingSection: React.FC<Props> = ({ values, onChange, isOverridden
                                                 </Form.Item>
                                             </Col>
                                             <Col xs={24} sm={12}>
+                                                <Form.Item htmlFor="setting-dock_approach_lateral_offset" data-setting-key="dock_approach_lateral_offset" label={fieldLabel("dock_approach_lateral_offset", t('dockingSection.approachLateralOffset'))} tooltip={t('dockingSection.approachLateralOffsetTooltip')}>
+                                                    <InputNumber id="setting-dock_approach_lateral_offset"
+                                                        value={values.dock_approach_lateral_offset as number | undefined}
+                                                        onChange={(v) => onChange("dock_approach_lateral_offset", v)}
+                                                        min={-0.3} max={0.3} step={0.01} precision={2}
+                                                        style={{ width: "100%" }} addonAfter="m"
+                                                    />
+                                                </Form.Item>
+                                            </Col>
+                                            <Col xs={24} sm={12}>
                                                 <Form.Item htmlFor="setting-dock_pose_yaw_sigma_rad" data-setting-key="dock_pose_yaw_sigma_rad" label={fieldLabel("dock_pose_yaw_sigma_rad", t('dockingSection.baseHeadingUncertainty'))} tooltip={t('dockingSection.baseHeadingUncertaintyTooltip')}>
                                                     <InputNumber id="setting-dock_pose_yaw_sigma_rad"
                                                         value={values.dock_pose_yaw_sigma_rad}

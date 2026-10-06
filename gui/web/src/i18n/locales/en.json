@@ -510,6 +510,8 @@
     "chargingThresholdTooltip": "Battery current (A) above which SimpleChargingDock considers the base reached. Higher = the robot pushes further into the contacts before stopping; lower = stops earlier. ~0.3 A gives stable contact on the YardForce charger.",
     "approachOvershoot": "Approach overshoot",
     "approachOvershootTooltip": "Distance (m) travelled beyond the base pose to seat the charging contacts firmly. ~0.05 m compensates for residual RTK noise / lever-arm offset.",
+    "approachLateralOffset": "Approach sideways trim",
+    "approachLateralOffsetTooltip": "Shifts the line the mower drives into the dock sideways (m): positive = left, negative = right, seen from the mower driving in. Only the approach moves; the stored dock pose stays where the mower charges. Use it when something blocks the approach on one side, such as a garage edge. 0 = off. Takes effect after a restart.",
     "baseHeadingUncertainty": "Base heading uncertainty",
     "baseHeadingUncertaintyTooltip": "Standard deviation (rad) of the base heading used to seed the fusion graph at charging contact. Lower = the calibrated heading is trusted more."
   },
@@ -2060,6 +2062,10 @@
     "dock_approach_overshoot": {
       "label": "Dock approach overshoot",
       "description": "Extra distance driven past the dock pose to guarantee charge-contact."
+    },
+    "dock_approach_lateral_offset": {
+      "label": "Dock approach sideways trim",
+      "description": "Shifts the dock approach line sideways (positive = left) without moving the stored dock pose."
     },
     "use_gps_dock_detection": {
       "label": "GPS dock detection",

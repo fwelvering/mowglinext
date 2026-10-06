@@ -945,3 +945,69 @@ def test_hardware_bridge_launch_injects_the_dig_sensitivity_preset():
     # Injected AFTER the static params file, so the preset wins over it.
     assert source.index("hardware_bridge_params,") < source.index(
         "dig_detector_params(robot_params)")
+
+
+# --- dock approach target: overshoot + sideways trim -------------------------------
+
+def test_dock_approach_target_without_a_trim_is_the_plain_overshoot():
+    # Exactly what navigation.launch.py computed before the lateral trim existed.
+    yaw = math.radians(126.3)
+    x, y, out_yaw = _util.dock_approach_target(0.274, -0.226, yaw, overshoot=0.05)
+    assert x == pytest.approx(0.274 + 0.05 * math.cos(yaw))
+    assert y == pytest.approx(-0.226 + 0.05 * math.sin(yaw))
+    assert out_yaw == yaw
+    # The trim defaults to nothing.
+    assert _util.dock_approach_target(0.274, -0.226, yaw, overshoot=0.05) ==         _util.dock_approach_target(0.274, -0.226, yaw, overshoot=0.05, lateral_offset=0.0)
+
+
+@pytest.mark.parametrize("yaw_deg, expected_dx, expected_dy", [
+    (0.0, 0.0, 0.10),      # heading east  -> left is north
+    (90.0, -0.10, 0.0),    # heading north -> left is west
+    (180.0, 0.0, -0.10),   # heading west  -> left is south
+    (-90.0, 0.10, 0.0),    # heading south -> left is east
+])
+def test_a_positive_lateral_offset_moves_the_target_to_the_left_of_the_heading(
+        yaw_deg, expected_dx, expected_dy):
+    x, y, _ = _util.dock_approach_target(1.0, 2.0, math.radians(yaw_deg), lateral_offset=0.10)
+    assert x - 1.0 == pytest.approx(expected_dx, abs=1e-9)
+    assert y - 2.0 == pytest.approx(expected_dy, abs=1e-9)
+
+
+def test_a_negative_lateral_offset_moves_the_target_to_the_right():
+    x, y, _ = _util.dock_approach_target(0.0, 0.0, 0.0, lateral_offset=-0.15)
+    assert (x, y) == pytest.approx((0.0, -0.15))
+
+
+def test_lateral_offset_is_perpendicular_to_the_overshoot_and_keeps_the_yaw():
+    yaw = math.radians(126.3)
+    base = _util.dock_approach_target(0.274, -0.226, yaw, overshoot=0.05)
+    trimmed = _util.dock_approach_target(0.274, -0.226, yaw, overshoot=0.05, lateral_offset=0.15)
+    dx, dy = trimmed[0] - base[0], trimmed[1] - base[1]
+    assert math.hypot(dx, dy) == pytest.approx(0.15)
+    # Perpendicular to the heading: no component along it, so the stop distance
+    # in front of the contacts is unchanged.
+    assert dx * math.cos(yaw) + dy * math.sin(yaw) == pytest.approx(0.0, abs=1e-9)
+    assert trimmed[2] == yaw
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (0.10, 0.10), (-0.10, -0.10), (0.0, 0.0),
+    (15.0, 0.30),     # a typo for 0.15 must not move the approach line 15 m
+    (-15.0, -0.30),
+    ("0.2", 0.2),
+])
+def test_lateral_offset_is_clamped_to_a_hands_breadth(raw, expected):
+    assert _util.clamp_dock_approach_lateral_offset(raw) == pytest.approx(expected)
+    assert _util.MAX_DOCK_APPROACH_LATERAL_OFFSET_M == 0.30
+
+
+def test_dock_approach_lateral_offset_template_and_schema_defaults_agree():
+    template = yaml.safe_load(_TEMPLATE_PATH.read_text())
+    params = template["mowgli"]["ros__parameters"] if "mowgli" in template else template
+    assert params["dock_approach_lateral_offset"] == 0.0
+    schema_path = _PKG_DIR.parents[2] / "gui" / "asserts" / "mower_config.schema.json"
+    prop = _find_schema_property(json.loads(schema_path.read_text()), "dock_approach_lateral_offset")
+    assert prop is not None
+    # The settings backend prunes a value equal to the schema default.
+    assert prop["default"] == params["dock_approach_lateral_offset"]
+    assert prop["type"] == "number"

@@ -120,6 +120,10 @@ const FIELD_TEXT: Record<string, string[]> = {
         "dockingSection.approachOvershoot",
         "dockingSection.approachOvershootTooltip"
     ],
+    "dock_approach_lateral_offset": [
+        "dockingSection.approachLateralOffset",
+        "dockingSection.approachLateralOffsetTooltip"
+    ],
     "dock_pose_yaw_sigma_rad": [
         "dockingSection.baseHeadingUncertainty",
         "dockingSection.baseHeadingUncertaintyTooltip"
