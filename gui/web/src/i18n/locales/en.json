@@ -1796,6 +1796,7 @@
     "collapse": "collapse",
     "expand": "expand",
     "obstacles": "Obstacles",
+    "drawnObstacles": "Drawn obstacles ({{count}})",
     "noObstacles": "No obstacles detected and no proposals waiting.",
     "mowingLines": "Mowing lines",
     "mowingLinesOff": "Shows how the robot will mow an area, so you can try an angle or direction before it mows.",

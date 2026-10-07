@@ -1975,12 +1975,12 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                 {
                                     key: 'areas',
                                     title: t('mapAreasList.areasHeader', {count: areasList.filter(a => a.ftype === 'workarea').length}),
-                                    content: areasList.length === 0 ? (
+                                    content: areasList.every(a => a.ftype === 'obstacle') ? (
                                         <div style={{padding: 12, fontSize: 13, color: colors.textSecondary}}>{t('mapSidebar.noAreas')}</div>
                                     ) : (
                                         <AreasListPanel
-                                            areas={areasList}
-                                            hideTitle
+                                            areas={areasList.filter(a => a.ftype !== 'obstacle')}
+                                            hideHeader
                                             onAreaClick={editMap ? handleAreaSelect : undefined}
                                             onReorder={editMap ? handleReorder : undefined}
                                             selectedId={editMap ? selectedFeatureIds[0] : undefined}
@@ -1990,22 +1990,45 @@ export const MapPage: React.FC<{compact?: boolean}> = ({compact = false}) => {
                                 {
                                     key: 'obstacles',
                                     title: t('mapSidebar.obstacles'),
-                                    badge: dynamicObstacles.length + obstacleProposals.length,
-                                    content: dynamicObstacles.length === 0 && obstacleProposals.length === 0 ? (
+                                    badge: areasList.filter(a => a.ftype === 'obstacle').length + dynamicObstacles.length + obstacleProposals.length,
+                                    content: areasList.every(a => a.ftype !== 'obstacle') && dynamicObstacles.length === 0 && obstacleProposals.length === 0 ? (
                                         <div style={{padding: 12, fontSize: 13, color: colors.textSecondary}}>{t('mapSidebar.noObstacles')}</div>
                                     ) : (
                                         <>
+                                            {areasList.some(a => a.ftype === 'obstacle') && (
+                                                <div>
+                                                    <div style={{
+                                                        padding: '8px 12px',
+                                                        fontSize: 12,
+                                                        fontWeight: 600,
+                                                        color: colors.muted,
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.05em',
+                                                        borderBottom: `1px solid ${colors.borderSubtle}`,
+                                                    }}>
+                                                        {t('mapSidebar.drawnObstacles', {count: areasList.filter(a => a.ftype === 'obstacle').length})}
+                                                    </div>
+                                                    <AreasListPanel
+                                                        areas={areasList.filter(a => a.ftype === 'obstacle')}
+                                                        hideHeader
+                                                        onAreaClick={editMap ? handleAreaSelect : undefined}
+                                                        selectedId={editMap ? selectedFeatureIds[0] : undefined}
+                                                    />
+                                                </div>
+                                            )}
                                             {dynamicObstacles.length > 0 && (
-                                                <TrackedObstaclesPanel
-                                                    obstacles={dynamicObstacles}
-                                                    obstacleAreaIndex={obstacleAreaIndex}
-                                                    areaNames={obstacleAreaNames}
-                                                    selectedObstacleId={selectedObstacleId}
-                                                    onHoverObstacle={setSelectedObstacleId}
-                                                />
+                                                <div style={{borderTop: areasList.some(a => a.ftype === 'obstacle') ? `1px solid ${colors.borderSubtle}` : undefined}}>
+                                                    <TrackedObstaclesPanel
+                                                        obstacles={dynamicObstacles}
+                                                        obstacleAreaIndex={obstacleAreaIndex}
+                                                        areaNames={obstacleAreaNames}
+                                                        selectedObstacleId={selectedObstacleId}
+                                                        onHoverObstacle={setSelectedObstacleId}
+                                                    />
+                                                </div>
                                             )}
                                             {obstacleProposals.length > 0 && (
-                                                <div style={{borderTop: dynamicObstacles.length > 0 ? `1px solid ${colors.borderSubtle}` : undefined}}>
+                                                <div style={{borderTop: areasList.some(a => a.ftype === 'obstacle') || dynamicObstacles.length > 0 ? `1px solid ${colors.borderSubtle}` : undefined}}>
                                                     <ObstacleProposalsPanel
                                                         proposals={obstacleProposals}
                                                         selectedProposalId={selectedProposalId}
