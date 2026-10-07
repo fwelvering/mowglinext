@@ -38,6 +38,27 @@ const CONTINUOUS_TOPICS = new Set([
     "wheelOdom", "lidar", "power", "diagnostics", "fusionDiag", "fusionRaw",
 ]);
 
+/**
+ * Topics that only feed pictures and that publish CONTINUOUSLY or periodically: the
+ * mow-progress grid (republished every couple of seconds), the scan, the pose and the raw
+ * sensor streams. Nobody looks at them while the tab is hidden, and they are the bulk of the
+ * bytes over the mower's wifi — weakest exactly where it mows. They are unsubscribed while
+ * the tab is hidden and resubscribed when it is shown again; the next frame follows within
+ * moments, so the page is complete again at once.
+ *
+ * Deliberately NOT here:
+ *  - anything background code acts on — highLevelStatus, status, emergency, power,
+ *    diagnostics, gps/gnssStatus — which drive notifications, the battery gauge and the
+ *    app shell even when the tab is not in front;
+ *  - topics that publish only ON CHANGE (map, plan, path, obstacles, recordingTrajectory,
+ *    lidarMap, cogHeading, magYaw): the server forgets its copy once the last listener
+ *    leaves, so after a resubscribe they could stay empty until the next change.
+ *    Pausing them needs the server to keep its latest message first.
+ */
+export const PAUSE_WHEN_HIDDEN = new Set([
+    "mowProgress", "lidar", "pose", "fusionRaw", "imu", "ticks", "wheelOdom",
+]);
+
 interface ServerFrame {
     topic: string;
     data: unknown;
@@ -62,9 +83,36 @@ export class MultiplexedSocket {
     private lastFrameAt = 0;
     private statusListeners = new Set<StatusListener>();
     private lastDecodeWarnAt = 0;
+    // True while the tab is hidden: the PAUSE_WHEN_HIDDEN topics are then not
+    // subscribed on the server, although their listeners stay registered.
+    private hidden = false;
 
     constructor(url: string) {
         this.url = url;
+    }
+
+    /** Whether the server should currently be streaming this topic to us. */
+    private isServed(topic: string): boolean {
+        return !(this.hidden && PAUSE_WHEN_HIDDEN.has(topic));
+    }
+
+    /**
+     * Tell the socket whether the tab is in front. Hidden: stop the visual-only
+     * topics on the server. Shown: start them again (the server replays its latest
+     * message per topic, so the first frame is a complete picture).
+     */
+    setHidden(hidden: boolean): void {
+        if (hidden === this.hidden) return;
+        this.hidden = hidden;
+        if (this.state === "open") {
+            for (const topic of this.listeners.keys()) {
+                if (PAUSE_WHEN_HIDDEN.has(topic)) {
+                    this.send({op: hidden ? "unsubscribe" : "subscribe", topic});
+                }
+            }
+        }
+        if (!hidden) this.lastFrameAt = performance.now();
+        this.updateSilenceWatchdog();
     }
 
     /** Current status for the shared connection ("closed" when idle). */
@@ -114,7 +162,7 @@ export class MultiplexedSocket {
 
         if (this.state === "idle") {
             this.connect();
-        } else if (this.state === "open" && isFirstSubscriberForTopic) {
+        } else if (this.state === "open" && isFirstSubscriberForTopic && this.isServed(topic)) {
             this.send({op: "subscribe", topic});
         }
         this.updateSilenceWatchdog();
@@ -129,7 +177,7 @@ export class MultiplexedSocket {
         this.pendingFirst.delete(listener);
         if (set.size === 0) {
             this.listeners.delete(topic);
-            if (this.state === "open") {
+            if (this.state === "open" && this.isServed(topic)) {
                 this.send({op: "unsubscribe", topic});
             }
         }
@@ -168,7 +216,7 @@ export class MultiplexedSocket {
             this.reconnectAttempt = 0;
             // Re-subscribe to every topic that still has listeners.
             for (const topic of this.listeners.keys()) {
-                this.send({op: "subscribe", topic});
+                if (this.isServed(topic)) this.send({op: "subscribe", topic});
             }
             this.updateSilenceWatchdog();
             this.notifyStatus();
@@ -242,7 +290,8 @@ export class MultiplexedSocket {
     }
 
     private updateSilenceWatchdog(): void {
-        const expectsTraffic = Array.from(this.listeners.keys()).some(topic => CONTINUOUS_TOPICS.has(topic));
+        // A topic paused with the tab hidden is silent by design, not by failure.
+        const expectsTraffic = Array.from(this.listeners.keys()).some(topic => CONTINUOUS_TOPICS.has(topic) && this.isServed(topic));
         if (this.state !== "open" || !expectsTraffic) {
             this.stopSilenceWatchdog();
         } else if (this.silenceTimer == null) {
@@ -316,7 +365,12 @@ function multiplexUrl(): string {
 
 export function getMultiplexedSocket(): MultiplexedSocket {
     if (singleton == null) {
-        singleton = new MultiplexedSocket(multiplexUrl());
+        const socket = new MultiplexedSocket(multiplexUrl());
+        if (typeof document !== "undefined") {
+            socket.setHidden(document.hidden);
+            document.addEventListener("visibilitychange", () => socket.setHidden(document.hidden));
+        }
+        singleton = socket;
     }
     return singleton;
 }
