@@ -14,9 +14,11 @@ interface AreasListPanelProps {
     onAreaClick?: (id: string) => void;
     onReorder?: (id: string, direction: 'up' | 'down') => void;
     selectedId?: string;
+    /// The sidebar section header already names this list: keep only the "other features" line.
+    hideTitle?: boolean;
 }
 
-export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId}: AreasListPanelProps) => {
+export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId, hideTitle = false}: AreasListPanelProps) => {
     const {colors} = useThemeMode();
     const {t} = useTranslation();
     const workAreas = areas.filter(a => a.ftype === 'workarea');
@@ -34,8 +36,8 @@ export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId}: Area
                 letterSpacing: '0.05em',
                 borderBottom: `1px solid ${colors.borderSubtle}`,
             }}>
-                {t('mapAreasList.areasHeader', {count: workAreas.length})}
-                <div style={{fontSize: 12, textTransform: 'none', letterSpacing: 0, marginTop: 4}}>{t('mapAreasList.otherFeatures', {navigation: areas.filter(a => a.ftype === 'navigation').length, obstacles: areas.filter(a => a.ftype === 'obstacle').length})}</div>
+                {!hideTitle && t('mapAreasList.areasHeader', {count: workAreas.length})}
+                <div style={{fontSize: 12, textTransform: 'none', letterSpacing: 0, marginTop: hideTitle ? 0 : 4}}>{t('mapAreasList.otherFeatures', {navigation: areas.filter(a => a.ftype === 'navigation').length, obstacles: areas.filter(a => a.ftype === 'obstacle').length})}</div>
             </div>
 
             {/* Area items */}
