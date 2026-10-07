@@ -1792,6 +1792,7 @@
     "collapse": "replier",
     "expand": "déplier",
     "obstacles": "Obstacles",
+    "drawnObstacles": "Obstacles dessinés ({{count}})",
     "noObstacles": "Aucun obstacle détecté et aucune proposition en attente.",
     "mowingLines": "Lignes de tonte",
     "mowingLinesOff": "Montre comment le robot va tondre une zone, pour essayer un angle ou un sens avant de tondre.",

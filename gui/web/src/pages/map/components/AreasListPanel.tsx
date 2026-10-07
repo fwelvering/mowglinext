@@ -14,11 +14,11 @@ interface AreasListPanelProps {
     onAreaClick?: (id: string) => void;
     onReorder?: (id: string, direction: 'up' | 'down') => void;
     selectedId?: string;
-    /// The sidebar section header already names this list: keep only the "other features" line.
-    hideTitle?: boolean;
+    /// The sidebar section header already names this list: render the rows only.
+    hideHeader?: boolean;
 }
 
-export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId, hideTitle = false}: AreasListPanelProps) => {
+export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId, hideHeader = false}: AreasListPanelProps) => {
     const {colors} = useThemeMode();
     const {t} = useTranslation();
     const workAreas = areas.filter(a => a.ftype === 'workarea');
@@ -27,7 +27,7 @@ export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId, hideT
     return (
         <div style={{display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, flex: '1 1 auto'}}>
             {/* Header */}
-            <div style={{
+            {!hideHeader && <div style={{
                 padding: '8px 12px',
                 fontSize: 12,
                 fontWeight: 600,
@@ -36,9 +36,9 @@ export const AreasListPanel = ({areas, onAreaClick, onReorder, selectedId, hideT
                 letterSpacing: '0.05em',
                 borderBottom: `1px solid ${colors.borderSubtle}`,
             }}>
-                {!hideTitle && t('mapAreasList.areasHeader', {count: workAreas.length})}
-                <div style={{fontSize: 12, textTransform: 'none', letterSpacing: 0, marginTop: hideTitle ? 0 : 4}}>{t('mapAreasList.otherFeatures', {navigation: areas.filter(a => a.ftype === 'navigation').length, obstacles: areas.filter(a => a.ftype === 'obstacle').length})}</div>
-            </div>
+                {t('mapAreasList.areasHeader', {count: workAreas.length})}
+                <div style={{fontSize: 12, textTransform: 'none', letterSpacing: 0, marginTop: 4}}>{t('mapAreasList.otherFeatures', {navigation: areas.filter(a => a.ftype === 'navigation').length, obstacles: areas.filter(a => a.ftype === 'obstacle').length})}</div>
+            </div>}
 
             {/* Area items */}
             <div style={{overflowY: 'auto', flex: 1, minHeight: 0}} className="scrollbar-thin">
