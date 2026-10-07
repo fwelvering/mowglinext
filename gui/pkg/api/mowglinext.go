@@ -27,6 +27,16 @@ import (
 // block a delivery goroutine forever; on timeout the connection is closed.
 const wsWriteTimeout = 5 * time.Second
 
+// Frames at least this big are sent with permessage-deflate when the browser offers it.
+// The big ones are occupancy grids (mow progress, LiDAR map) that are almost all one
+// value, so they shrink by two orders of magnitude; small, frequent frames (pose, status)
+// are not worth the CPU. 4 KiB is well below any grid and above every status message.
+const wsCompressMinBytes = 4 * 1024
+
+// wsCompressionLevel favours speed: the mower's CPU is small and the win comes from
+// the redundancy of the data, not from squeezing the last byte.
+const wsCompressionLevel = 1
+
 func compactCoveragePreview(obj interface{}) {
 	message, ok := obj.(map[string]interface{})
 	if !ok {
@@ -46,6 +56,16 @@ func compactCoveragePreview(obj interface{}) {
 	}
 	message["xy"] = compact
 }
+
+// multiplexUpgrader is the upgrader the multiplex route uses. Identical to `upgrader`
+// except it negotiates permessage-deflate (RFC 7692) when the browser offers it, which
+// every current browser does; a client that does not simply gets uncompressed frames.
+// Only this route is opted in: it carries the large grids.
+var multiplexUpgrader = func() websocket.Upgrader {
+	u := upgrader
+	u.EnableCompression = true
+	return u
+}()
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize: 1024,
@@ -374,11 +394,13 @@ func compactMultiplexNumbers(value any) any {
 // @Router /mowglinext/multiplex [get]
 func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 	group.GET("/multiplex", func(c *gin.Context) {
-		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+		conn, err := multiplexUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			return
 		}
 		defer conn.Close()
+		// A no-op unless the browser negotiated permessage-deflate.
+		_ = conn.SetCompressionLevel(wsCompressionLevel)
 
 		type subState struct {
 			id string
@@ -427,6 +449,7 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			// timeout/error, close the conn so the read loop unblocks and the
 			// deferred cleanup releases all subscriptions.
 			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			conn.EnableWriteCompression(payload.Len() >= wsCompressMinBytes)
 			if err := conn.WriteMessage(websocket.BinaryMessage, payload.Bytes()); err != nil {
 				_ = conn.Close()
 			}
