@@ -16,8 +16,8 @@ export const SensorsSection: React.FC<Props> = ({ values, onChange }) => {
     const handleLidarToggle = (enabled: boolean) => {
         onChange("lidar_enabled", enabled);
     };
-    const lidarEnabled = values.lidar_enabled ?? false;
-    const pwmEnabled = values.lidar_pwm_enabled ?? false;
+    const lidarEnabled = (values.lidar_enabled as boolean | undefined) ?? false;
+    const pwmEnabled = (values.lidar_pwm_enabled as boolean | undefined) ?? false;
 
     return (
         <div>
@@ -88,7 +88,7 @@ export const SensorsSection: React.FC<Props> = ({ values, onChange }) => {
                                             tooltip={t("settingsSensors.lidarPwmGpioPinTooltip")}
                                         >
                                             <InputNumber
-                                                value={values.lidar_pwm_gpio_pin}
+                                                value={values.lidar_pwm_gpio_pin as number | undefined}
                                                 onChange={(v) => onChange("lidar_pwm_gpio_pin", v)}
                                                 min={0} max={27} step={1} precision={0}
                                                 style={{ width: "100%" }}
