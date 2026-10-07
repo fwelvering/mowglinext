@@ -367,6 +367,7 @@ All sensor positions drive both the URDF (TF frames) and the Nav2 footprint poly
 | `undock_speed` | `0.16` | Reverse speed during undocking (m/s) |
 | `dock_approach_distance` | `1.5` | Straight-in runway behind the dock → `simple_charging_dock.staging_x_offset` |
 | `dock_approach_overshoot` | `0.05` | Forward overshoot past the calibrated dock pose so the contacts seat |
+| `dock_approach_lateral_offset` | `0.0` | Sideways trim of the approach target (+ = left, ±0.30 m). The stored dock pose does not move |
 | `dock_max_retries` | `3` | Maximum docking attempts (injected at launch into nav2 `docking_server.max_retries`) |
 | `dock_charging_threshold` | `0.3` | Charging current (A) at which `SimpleChargingDock` calls the cradle reached |
 

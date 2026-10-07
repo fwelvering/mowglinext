@@ -34,6 +34,7 @@
     "deadband_pwm": "number",
     "declination_deg": "number",
     "dock_approach_distance": "number",
+    "dock_approach_lateral_offset": "number",
     "dock_approach_overshoot": "number",
     "dock_calib_cog_bearing_match_max_rad": "number",
     "dock_calib_cog_min_samples": "integer",

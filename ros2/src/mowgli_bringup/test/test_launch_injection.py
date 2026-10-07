@@ -614,3 +614,34 @@ def test_dock_pose_reaches_mqtt_bridge() -> None:
         scope = {"__builtins__": {}, "float": float}
         assert eval(expression, scope, {"robot_params": {key: 1.25}}) == 1.25, key
         assert eval(expression, scope, {"robot_params": {}}) == 0.0, key
+
+
+def test_dock_approach_lateral_offset_trims_only_the_approach_target() -> None:
+    """The sideways trim reaches docking_server's home_dock.pose, and ONLY that.
+
+    fusion_graph pins the fused pose onto the STORED dock pose while charging, so a
+    trim leaking into dock_pose_x/y (or into gps_dock_detection / map_server, which
+    read the same values) makes the docked map marker walk away from the dock
+    (field 2026-10-06).
+    """
+    tree = _parse("navigation.launch.py")
+    assert _reads_robot_param(
+        tree, "dock_approach_lateral_offset", "dock_approach_lateral_offset"
+    ), "navigation.launch.py no longer reads dock_approach_lateral_offset"
+
+    # home_dock["pose"] is built by dock_approach_target(...) with the trim passed in.
+    values = _subscript_assign_values(tree, "home_dock", "pose")
+    assert len(values) == 1
+    call = values[0]
+    assert isinstance(call, ast.Call)
+    assert isinstance(call.func, ast.Name) and call.func.id == "dock_approach_target"
+    keywords = {kw.arg: kw.value for kw in call.keywords}
+    assert isinstance(keywords.get("lateral_offset"), ast.Name)
+    assert keywords["lateral_offset"].id == "dock_approach_lateral_offset"
+
+    # Everything else keeps the STORED pose: the localization pin must not move.
+    source = _launch_path("navigation.launch.py")
+    with open(source, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    assert '"dock_pose_x": dock_pose_x,' in text
+    assert '"dock_pose_y": dock_pose_y,' in text
