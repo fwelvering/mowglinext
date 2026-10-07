@@ -382,8 +382,9 @@ func compactMultiplexNumbers(value any) any {
 // WebSocket so a single browser tab does not need ~25 simultaneous TCP
 // connections. Wire format:
 //
-//	client → server: JSON {"op": "subscribe"|"unsubscribe", "topic": "<key>"}
-//	server → client: MessagePack {"topic": "<key>", "data": <decoded object>}
+//	client → server: JSON {"op": "subscribe"|"unsubscribe"|"resync", "topic": "<key>", "delta": <bool>}
+//	server → client: MessagePack {"topic": "<key>", "data": <decoded object>[, "seq": n]}
+//	                 or, for a delta subscription, {"topic": "<key>", "patch": {...}} (grid_delta.go)
 //
 // Per-topic throttling reuses topicSubscribeInterval. Unknown topics are
 // ignored. On disconnect, all live subscriptions are released.
@@ -404,12 +405,16 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 
 		type subState struct {
 			id string
+			// delta is set for the occupancy-grid topics the browser asked to receive as
+			// patches (see grid_delta.go); nil for every other subscription.
+			delta *gridDelta
 		}
 		var stateMu sync.Mutex
 		state := map[string]*subState{}
 
 		var writeMu sync.Mutex
-		writeFrame := func(topic string, data []byte) {
+		// seq is set (one value) only on the full frames of a delta subscription.
+		writeFrame := func(topic string, data []byte, seq ...uint64) {
 			// Re-encode the frame as MessagePack and send it as a BINARY frame.
 			// `data` is the per-message snake_case JSON produced upstream; we
 			// decode it to a generic value and msgpack-encode {topic, data:obj}
@@ -433,10 +438,14 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			var payload bytes.Buffer
 			encoder := msgpack.NewEncoder(&payload)
 			encoder.UseCompactInts(true)
-			err := encoder.Encode(map[string]interface{}{
+			frame := map[string]interface{}{
 				"topic": topic,
 				"data":  compactMultiplexNumbers(obj),
-			})
+			}
+			if len(seq) > 0 {
+				frame["seq"] = seq[0]
+			}
+			err := encoder.Encode(frame)
 			if err != nil {
 				return
 			}
@@ -455,7 +464,48 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			}
 		}
 
-		subscribeTopic := func(topic string) {
+		writePatch := func(topic string, f gridFrame) {
+			var header interface{}
+			if len(f.Header) > 0 {
+				_ = json.Unmarshal(f.Header, &header)
+			}
+			var payload bytes.Buffer
+			encoder := msgpack.NewEncoder(&payload)
+			encoder.UseCompactInts(true)
+			if err := encoder.Encode(map[string]interface{}{
+				"topic": topic,
+				"patch": map[string]interface{}{
+					"base":   f.Base,
+					"seq":    f.Seq,
+					"header": compactMultiplexNumbers(header),
+					"gaps":   f.Gaps,
+					"vals":   f.Vals,
+				},
+			}); err != nil {
+				return
+			}
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+			if err := conn.WriteMessage(websocket.BinaryMessage, payload.Bytes()); err != nil {
+				_ = conn.Close()
+			}
+		}
+
+		// sendGrid sends one grid message of a delta subscription as a patch or in full.
+		sendGrid := func(topic string, d *gridDelta, msg []byte) {
+			f, ok := d.next(msg)
+			switch {
+			case !ok:
+				writeFrame(topic, msg)
+			case f.Full:
+				writeFrame(topic, f.Raw, f.Seq)
+			default:
+				writePatch(topic, f)
+			}
+		}
+
+		subscribeTopic := func(topic string, delta bool) {
 			interval, known := topicSubscribeInterval(topic)
 			if !known {
 				log.Printf("MultiplexRoute: ignoring unknown topic %q", topic)
@@ -467,13 +517,21 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 				return
 			}
 			id := uuid.Generate().String()
-			state[topic] = &subState{id: id}
+			sub := &subState{id: id}
+			if delta && gridDeltaTopics[topic] {
+				sub.delta = &gridDelta{}
+			}
+			state[topic] = sub
 			stateMu.Unlock()
 
 			// Throttling is enforced inside the RosSubscriber (coalescing,
 			// non-blocking) — NOT with a time.Sleep here, which used to block
 			// the per-topic delivery goroutine.
 			err := provider.Subscribe(topic, id, interval, func(msg []byte) {
+				if sub.delta != nil {
+					sendGrid(topic, sub.delta, msg)
+					return
+				}
 				writeFrame(topic, msg)
 			})
 			if err != nil {
@@ -517,6 +575,8 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 		type clientMsg struct {
 			Op    string `json:"op"`
 			Topic string `json:"topic"`
+			// Delta asks for the occupancy-grid topics as patches (grid_delta.go).
+			Delta bool `json:"delta"`
 		}
 		for {
 			_, payload, err := conn.ReadMessage()
@@ -529,9 +589,19 @@ func MultiplexRoute(group *gin.RouterGroup, provider types.IRosProvider) {
 			}
 			switch m.Op {
 			case "subscribe":
-				subscribeTopic(m.Topic)
+				subscribeTopic(m.Topic, m.Delta)
 			case "unsubscribe":
 				unsubscribeTopic(m.Topic)
+			case "resync":
+				// The browser saw a patch it could not apply: send the grid again in full.
+				stateMu.Lock()
+				sub := state[m.Topic]
+				stateMu.Unlock()
+				if sub != nil && sub.delta != nil {
+					if f, ok := sub.delta.resync(); ok {
+						writeFrame(m.Topic, f.Raw, f.Seq)
+					}
+				}
 			}
 		}
 	})
