@@ -68,9 +68,12 @@ function notifyListeners(): void {
     for (const listener of listeners) listener();
 }
 
+// `state.active_job_id` is NOT "a job is running": it names the job behind the installed
+// deployment and stays set after every successful update. Only `state.job` in a phase that
+// is not final means an update is going on (the updater's Job.Pending()).
 function updateInProgress(data: HostUpdater | undefined): boolean {
-    const state = data?.state;
-    return !!state && (!!state.active_job_id || (!!state.job && !JOB_DONE_PHASES.includes(state.job.phase)));
+    const job = data?.state?.job;
+    return !!job && !JOB_DONE_PHASES.includes(job.phase);
 }
 
 function nextDelay(): number {

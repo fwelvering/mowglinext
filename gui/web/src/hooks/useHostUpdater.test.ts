@@ -64,8 +64,8 @@ describe('useHostUpdater', () => {
         const {POLL_FAST_MS, POLL_IDLE_MS, useHostUpdater} = await loadHook();
         const calls = mockFetch([
             {status: 200, body: stateBody(), etag: '"idle"'},
-            {status: 200, body: stateBody({active_job_id: 'j1', job: {id: 'j1', kind: 'apply', phase: 'pulling'}}), etag: '"busy"'},
-            {status: 200, body: stateBody({active_job_id: 'j1', job: {id: 'j1', kind: 'apply', phase: 'pulling'}}), etag: '"busy"'},
+            {status: 200, body: stateBody({active_job_id: 'job-0', job: {id: 'j1', kind: 'containers', phase: 'pulling'}}), etag: '"busy"'},
+            {status: 200, body: stateBody({active_job_id: 'job-0', job: {id: 'j1', kind: 'containers', phase: 'pulling'}}), etag: '"busy"'},
         ]);
         renderHook(() => useHostUpdater());
         await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -80,6 +80,23 @@ describe('useHostUpdater', () => {
         // ...and from then on it polls fast.
         await act(async () => { await vi.advanceTimersByTimeAsync(POLL_FAST_MS); });
         expect(calls).toHaveLength(3);
+    });
+
+    it('stays on the slow rate after an update has finished (active_job_id names the installed job, it is not a running one)', async () => {
+        const {POLL_FAST_MS, POLL_IDLE_MS, useHostUpdater} = await loadHook();
+        const calls = mockFetch([
+            {status: 200, body: stateBody({active_job_id: 'job-1', job: {id: 'job-1', kind: 'containers', phase: 'succeeded'}}), etag: '"done"'},
+            {status: 304},
+        ]);
+        renderHook(() => useHostUpdater());
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        expect(calls).toHaveLength(1);
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(POLL_IDLE_MS - 1); });
+        expect(calls).toHaveLength(1);
+        expect(POLL_FAST_MS).toBeLessThan(POLL_IDLE_MS - 1);
+        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+        expect(calls).toHaveLength(2);
     });
 
     it('does not poll while the tab is hidden and catches up when it is shown', async () => {
