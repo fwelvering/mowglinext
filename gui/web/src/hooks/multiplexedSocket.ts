@@ -59,14 +59,39 @@ export const PAUSE_WHEN_HIDDEN = new Set([
     "mowProgress", "lidar", "pose", "fusionRaw", "imu", "ticks", "wheelOdom",
 ]);
 
+/**
+ * Occupancy-grid topics the server can send as PATCHES (gui/pkg/api/grid_delta.go): after one
+ * full grid only the cells that changed, which while mowing is a few dozen of over a million.
+ * The browser keeps the grid and applies each patch, so listeners still receive a complete
+ * grid object. A patch that does not fit what is held (a frame was lost) is dropped and a full
+ * grid is requested, so a wrong picture can never persist.
+ */
+export const DELTA_TOPICS = new Set(["mowProgress", "lidarMap"]);
+
+interface GridPatch {
+    /** The seq the held grid must have for this patch to apply. */
+    base: number;
+    seq: number;
+    header?: unknown;
+    /** gaps[i] = distance from the previous changed index (from 0 for the first). */
+    gaps: number[];
+    vals: number[];
+}
+
+type HeldGrid = Record<string, unknown> & {data: number[]};
+
 interface ServerFrame {
     topic: string;
-    data: unknown;
+    data?: unknown;
+    /** Present on the full grid frames of a delta subscription. */
+    seq?: number;
+    patch?: GridPatch;
 }
 
 interface ClientOp {
-    op: "subscribe" | "unsubscribe";
+    op: "subscribe" | "unsubscribe" | "resync";
     topic: string;
+    delta?: boolean;
 }
 
 export class MultiplexedSocket {
@@ -86,6 +111,9 @@ export class MultiplexedSocket {
     // True while the tab is hidden: the PAUSE_WHEN_HIDDEN topics are then not
     // subscribed on the server, although their listeners stay registered.
     private hidden = false;
+    // The grid each delta topic currently holds, and the topics we asked a full grid for.
+    private grids = new Map<string, {seq: number; grid: HeldGrid}>();
+    private resyncing = new Set<string>();
 
     constructor(url: string) {
         this.url = url;
@@ -177,6 +205,7 @@ export class MultiplexedSocket {
         this.pendingFirst.delete(listener);
         if (set.size === 0) {
             this.listeners.delete(topic);
+            this.forgetGrid(topic);
             if (this.state === "open" && this.isServed(topic)) {
                 this.send({op: "unsubscribe", topic});
             }
@@ -230,13 +259,20 @@ export class MultiplexedSocket {
             let frame: ServerFrame;
             try {
                 frame = unpack(new Uint8Array(data)) as ServerFrame;
-                if (!frame || typeof frame.topic !== "string" || !("data" in frame)) return;
+                if (!frame || typeof frame.topic !== "string" || !("data" in frame || "patch" in frame)) return;
             } catch (err) {
                 this.warnDecodeFailure(data, err);
                 return;
             }
             const set = this.listeners.get(frame.topic);
             if (!set || set.size === 0) return;
+            let payload: unknown = frame.data;
+            if (frame.patch !== undefined) {
+                payload = this.applyGridPatch(frame.topic, frame.patch);
+                if (payload === undefined) return; // not applicable: a full grid was requested
+            } else if (typeof frame.seq === "number") {
+                this.rememberGrid(frame.topic, frame.seq, frame.data);
+            }
             // Transport liveness only: a cached ROS value is not evidence of a
             // fresh physical observation. Use a monotonic clock for delivery.
             this.lastFrameAt = performance.now();
@@ -247,7 +283,7 @@ export class MultiplexedSocket {
                 const isFirst = this.pendingFirst.has(cb);
                 if (isFirst) this.pendingFirst.delete(cb);
                 try {
-                    cb(frame.data, isFirst);
+                    cb(payload, isFirst);
                 } catch (err) {
                     console.error("MultiplexedSocket: listener threw", err);
                 }
@@ -269,6 +305,8 @@ export class MultiplexedSocket {
     }
 
     private disconnect(): void {
+        this.grids.clear();
+        this.resyncing.clear();
         this.stopSilenceWatchdog();
         const ws = this.ws;
         this.ws = null;
@@ -345,8 +383,54 @@ export class MultiplexedSocket {
         }, delay);
     }
 
+    private forgetGrid(topic: string): void {
+        this.grids.delete(topic);
+        this.resyncing.delete(topic);
+    }
+
+    private rememberGrid(topic: string, seq: number, grid: unknown): void {
+        this.resyncing.delete(topic);
+        if (grid && typeof grid === "object" && Array.isArray((grid as {data?: unknown}).data)) {
+            this.grids.set(topic, {seq, grid: grid as HeldGrid});
+        } else {
+            this.grids.delete(topic);
+        }
+    }
+
+    /** The grid with the patch applied, or undefined (after asking for a full grid) when it does not fit. */
+    private applyGridPatch(topic: string, patch: GridPatch): HeldGrid | undefined {
+        const held = this.grids.get(topic);
+        if (!held || held.seq !== patch.base || !Array.isArray(patch.gaps) || !Array.isArray(patch.vals)
+            || patch.gaps.length !== patch.vals.length) {
+            this.requestFullGrid(topic);
+            return undefined;
+        }
+        const data = held.grid.data;
+        let at = 0;
+        for (let i = 0; i < patch.gaps.length; i++) {
+            at += patch.gaps[i];
+            if (at < 0 || at >= data.length) {
+                this.requestFullGrid(topic);
+                return undefined;
+            }
+            data[at] = patch.vals[i];
+        }
+        held.seq = patch.seq;
+        // A new top-level object (consumers may compare references), the same cell array.
+        held.grid = {...held.grid, header: patch.header ?? held.grid.header};
+        return held.grid;
+    }
+
+    private requestFullGrid(topic: string): void {
+        this.grids.delete(topic);
+        if (this.resyncing.has(topic)) return;
+        this.resyncing.add(topic);
+        this.send({op: "resync", topic});
+    }
+
     private send(op: ClientOp): void {
         if (!this.ws || this.state !== "open") return;
+        if (op.op === "subscribe" && DELTA_TOPICS.has(op.topic)) op = {...op, delta: true};
         try {
             this.ws.send(JSON.stringify(op));
         } catch (err) {

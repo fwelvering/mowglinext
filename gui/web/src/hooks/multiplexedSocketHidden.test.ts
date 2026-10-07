@@ -62,7 +62,7 @@ describe('MultiplexedSocket in a hidden tab', () => {
         ws.send.mockClear();
         socket.setHidden(false);
         expect(ws.operations()).toEqual([
-            {op: 'subscribe', topic: 'mowProgress'},
+            {op: 'subscribe', topic: 'mowProgress', delta: true},
             {op: 'subscribe', topic: 'lidar'},
         ]);
     });
@@ -103,7 +103,7 @@ describe('MultiplexedSocket in a hidden tab', () => {
         expect(ws.operations()).toEqual([]);
 
         socket.setHidden(false);
-        expect(ws.operations()).toEqual([{op: 'subscribe', topic: 'mowProgress'}]);
+        expect(ws.operations()).toEqual([{op: 'subscribe', topic: 'mowProgress', delta: true}]);
     });
 
     it('connecting while hidden subscribes only the topics that are still served', () => {
