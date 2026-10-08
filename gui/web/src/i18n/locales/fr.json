@@ -2792,7 +2792,9 @@
     "criticalRecovery": "Récupération critique",
     "criticalRecoveryTooltip": "Quitter l'état batterie critique une fois rechargée au-dessus de ce %. Borne supérieure d'hystérésis, doit être supérieure à Critique.",
     "manualResume": "Reprise manuelle",
-    "manualResumeTooltip": "Appuyer sur Lecture pendant une recharge en cours de session ne reprend la tonte qu'au-dessus de ce %. Doit être supérieur à Faible (accostage), sinon le robot retourne à la base en quelques minutes."
+    "manualResumeTooltip": "Appuyer sur Lecture pendant une recharge en cours de session ne reprend la tonte qu'au-dessus de ce %. Doit être supérieur à Faible (accostage), sinon le robot retourne à la base en quelques minutes.",
+    "chargeTail": "Courant de fin de charge",
+    "chargeTailTooltip": "Après une recharge en cours de session, le robot ne reprend que lorsque le courant de charge est tombé à cette valeur (A), en plus d'avoir atteint le % Plein. Plus élevé = reprise plus tôt avec une batterie un peu moins pleine. Par défaut 0,08 A, comme le courant de fin de charge du firmware."
   },
   "settingsSafety": {
     "alertMessage": "Les réglages de sécurité protègent le robot et son environnement",
