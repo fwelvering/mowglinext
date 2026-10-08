@@ -46,6 +46,7 @@ recompute_image_defaults() {
   LIDAR_RPLIDAR_IMAGE_DEFAULT="${prefix}/lidar-rplidar:${IMAGE_TAG}"
   LIDAR_STL27L_IMAGE_DEFAULT="${prefix}/lidar-stl27l:${IMAGE_TAG}"
   MAVROS_IMAGE_DEFAULT="${prefix}/mavros:${IMAGE_TAG}"
+  OPENMOWER_IMAGE_DEFAULT="${prefix}/openmower:${IMAGE_TAG}"
   GUI_IMAGE_DEFAULT="${prefix}/mowglinext-gui:${IMAGE_TAG}"
   # Universal GNSS is a separately released runtime. Never derive it from
   # MowgliNext IMAGE_TAG; the integration targets ROS 2 Lyrical.
@@ -357,13 +358,10 @@ compose_restart_services_for_backend() {
   local gnss_stack
   local gnss_service
 
-  case "$backend" in
-    mowgli|mavros) ;;
-    *)
-      error "Unknown hardware backend: $backend (expected mowgli or mavros)"
-      return 1
-      ;;
-  esac
+  if ! is_supported_hardware_backend "$backend"; then
+    error "Unknown hardware backend: $backend (expected ${SUPPORTED_HARDWARE_BACKENDS// /, })"
+    return 1
+  fi
 
   gnss_backend="$(effective_gnss_backend 2>/dev/null || true)"
   gnss_stack="$(effective_gnss_stack 2>/dev/null || true)"
@@ -374,6 +372,10 @@ compose_restart_services_for_backend() {
 
   if [[ "$backend" == "mavros" ]]; then
     services+=(mavros)
+  fi
+  # The OpenMower bridge reads mowgli_robot.yaml too, so it restarts with it.
+  if [[ "$backend" == "openmower" ]]; then
+    services+=(openmower)
   fi
   services+=(mowgli)
 
@@ -514,6 +516,26 @@ gnss_connection_from_serial_device() {
   fi
 
   printf 'uart\n'
+}
+
+# Every hardware backend the installer can select. Lives HERE, next to the
+# other shared predicates, and NOT in backend_choice.sh (which owns only the
+# interactive selection flow): docker/stack.sh sources common/config/docker/
+# deploy/compose and then calls build_compose_stack, so a guard that compose.sh
+# needs must be defined in a lib stack.sh actually sources. When this lived in
+# backend_choice.sh, `stack.sh regen` died with "command not found" and — since
+# `! <missing command>` is TRUE — reported "Unknown HARDWARE_BACKEND" for every
+# backend including the default one.
+# Keep in lockstep with SUPPORTED_HARDWARE_BACKENDS in
+# ros2/src/mowgli_bringup/launch/mowgli.launch.py (pinned by
+# test_hardware_backend_launch.py) and the composer in docs/index.html.
+SUPPORTED_HARDWARE_BACKENDS="mowgli mavros openmower"
+
+is_supported_hardware_backend() {
+  case "${1:-}" in
+    mowgli|mavros|openmower) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 list_supported_gnss_backends() {
@@ -838,8 +860,12 @@ parse_args() {
           mavros)
             HARDWARE_BACKEND="mavros"
             ;;
+          openmower)
+            HARDWARE_BACKEND="openmower"
+            MAVROS_BY_ID=""
+            ;;
           *)
-            error "Unknown hardware backend: $backend_spec (expected mowgli or mavros)"
+            error "Unknown hardware backend: $backend_spec (expected mowgli, mavros or openmower)"
             exit 1
             ;;
         esac
@@ -1259,6 +1285,13 @@ EOF
   local lidar_on="false"
   [[ "${LIDAR_ENABLED:-false}" == "true" ]] && lidar_on="true"
   _yaml_patch_key "$yaml_file" lidar_enabled "$lidar_on" || return 1
+
+  # No per-backend seeding: OpenMower's different defaults (xESC hall ticks,
+  # the LowLevel board's own lift/tilt/charge values) live in
+  # ros2/src/mowgli_bringup/config/backends/openmower.yaml, which every
+  # consumer layers between the template and this sparse file. Writing them
+  # here would pin them and break the GUI's reset-to-default — which is also
+  # why the seed carries no ticks_per_meter.
 
   # The Universal GNSS sidecar reads mowgli_robot.yaml itself (see
   # install/compose/docker-compose.gps.yml): no derived parameter file.
