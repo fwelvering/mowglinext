@@ -868,6 +868,37 @@ TEST_F(FollowStripDigTest, NearEndAbortPreservesResumeWithoutCompleting)
   EXPECT_TRUE(ctx->completed_areas.empty());
 }
 
+// A transit goal the server has not answered yet has no handle to cancel. Halting right after
+// sending it must still cancel it once the server accepts it, or it runs with no owner and keeps
+// the navigator busy (field 2026-10-09: seven minutes, docking and every later transit refused).
+TEST_F(FollowStripDigTest, HaltingBeforeTheTransitIsAnsweredStillCancelsIt)
+{
+  // The robot is at x=0 and the only unit starts at x=2, so the first dispatch is a transit.
+  startFollowStrip({straightUnit(2.0, 4.0)});
+
+  // Tick until the transit has been sent (FollowStrip reports it through ctx->transiting), then
+  // halt at once, before the server's answer can have been picked up.
+  for (int i = 0; i < 20 && !ctx->transiting; ++i)
+  {
+    ASSERT_EQ(tree->tickOnce(), BT::NodeStatus::RUNNING);
+  }
+  ASSERT_TRUE(ctx->transiting) << "the first dispatch did not start a transit";
+  tree->haltTree();
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  bool canceled = false;
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    if (navigate->goalCount() == 1 && navigate->isCanceling(0))
+    {
+      canceled = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_TRUE(canceled) << "the abandoned transit goal was never cancelled";
+}
+
 TEST_F(FollowStripDigTest, ResumeDoesNotCompleteEarlierUnitSkippedAfterTransitFailure)
 {
   const auto skipped_unit = straightUnit(2.0, 4.0);

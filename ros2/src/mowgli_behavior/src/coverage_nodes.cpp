@@ -786,6 +786,9 @@ bool FollowStrip::sendFollowGoal(const std::shared_ptr<BTContext>& ctx)
     slot->last_error_m = error_m;
     slot->last_index = index;
   };
+  follow_abandonment_ = std::make_shared<GoalAbandonment>();
+  follow_opts.goal_response_callback =
+      cancelWhenAbandoned<Nav2FollowPath>(follow_client_, follow_abandonment_);
   follow_future_ = follow_client_->async_send_goal(goal, follow_opts);
   swath_goal_sent_ = true;
   follow_goal_ever_sent_ = true;
@@ -927,7 +930,10 @@ bool FollowStrip::sendCurrentSwath(const std::shared_ptr<BTContext>& ctx)
     // callback can never write through a dangling `this`.
     resetTransitResult();
     transit_outcome_->Reset();
+    transit_abandonment_ = std::make_shared<GoalAbandonment>();
     rclcpp_action::Client<Nav2Navigate>::SendGoalOptions send_opts;
+    send_opts.goal_response_callback =
+        cancelWhenAbandoned<Nav2Navigate>(nav_client_, transit_abandonment_);
     send_opts.result_callback =
         [slot = transit_result_, outcome = transit_outcome_](const NavGoalHandle::WrappedResult& r)
     {
@@ -1082,6 +1088,9 @@ BT::NodeStatus FollowStrip::onRunning()
   // every swath was skipped (nothing got mowed).
   auto advance = [&]() -> BT::NodeStatus
   {
+    // Whatever way the current unit ended — mowed, booked, skipped — its blade-off transit goal
+    // must not outlive it (field 2026-10-09: the orphan kept the navigator busy for 7 minutes).
+    cancelTransit(ctx, "leaving the unit");
     ++swath_idx_;
     // Moving to a fresh unit: its progress starts at 0 and it is untrimmed (only
     // the one resumed unit carries a trim offset). Without this reset the stale
@@ -1306,6 +1315,9 @@ BT::NodeStatus FollowStrip::onRunning()
                     "(no result, no error code) — skipping",
                     swath_idx_ + 1,
                     swaths_.size());
+        // A busy navigator refuses with no error code. If it is busy with a goal that has no
+        // owner any more, this frees it for the next attempt (see cancel_goal.hpp).
+        cancelAllGoalsQuietly(nav_client_, ctx->node->get_logger(), "FollowStrip");
         transit_active_ = false;
         ++swaths_skipped_;
         return advance();
@@ -1682,33 +1694,20 @@ BT::NodeStatus FollowStrip::yieldToFleet(const std::shared_ptr<BTContext>& ctx, 
 
 void FollowStrip::abortActiveGoals(const std::shared_ptr<BTContext>& ctx)
 {
-  if (follow_handle_)
-  {
-    try
-    {
-      follow_client_->async_cancel_goal(follow_handle_);
-    }
-    catch (const std::exception& ex)
-    {
-      RCLCPP_WARN(ctx->node->get_logger(),
-                  "FollowStrip: follow goal was already gone while halting: %s",
-                  ex.what());
-    }
-  }
+  // abandonGoal() also reaches a goal the server has not answered yet (no handle to cancel).
+  abandonGoal(follow_client_,
+              follow_handle_,
+              follow_future_,
+              follow_abandonment_,
+              ctx->node->get_logger(),
+              "FollowStrip follow goal");
   follow_handle_.reset();
-  if (nav_handle_ && nav_client_)
-  {
-    try
-    {
-      nav_client_->async_cancel_goal(nav_handle_);
-    }
-    catch (const std::exception& ex)
-    {
-      RCLCPP_WARN(ctx->node->get_logger(),
-                  "FollowStrip: transit goal was already gone while halting: %s",
-                  ex.what());
-    }
-  }
+  abandonGoal(nav_client_,
+              nav_handle_,
+              nav_future_,
+              transit_abandonment_,
+              ctx->node->get_logger(),
+              "FollowStrip transit goal");
   nav_handle_.reset();
   transit_active_ = false;
   transit_pending_ = false;
@@ -1726,6 +1725,31 @@ void FollowStrip::abortActiveGoals(const std::shared_ptr<BTContext>& ctx)
   dig_recovery_active_ = false;
   dig_cancel_sent_ = false;
   setBladeEnabled(false);
+}
+
+void FollowStrip::cancelTransit(const std::shared_ptr<BTContext>& ctx, const char* why)
+{
+  if (!transit_active_ && !nav_handle_)
+  {
+    return;
+  }
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "FollowStrip: cancelling the transit to unit %zu/%zu (%s)",
+              swath_idx_ + 1,
+              swaths_.size(),
+              why);
+  abandonGoal(nav_client_,
+              nav_handle_,
+              nav_future_,
+              transit_abandonment_,
+              ctx->node->get_logger(),
+              "FollowStrip transit goal");
+  nav_handle_.reset();
+  transit_active_ = false;
+  transit_pending_ = false;
+  transit_abort_seen_ = false;
+  transit_result_.reset();
+  ctx->transiting = false;
 }
 
 bool FollowStrip::stepScanPause(const std::shared_ptr<BTContext>& ctx, bool allow_resume)
@@ -2253,7 +2277,10 @@ BT::NodeStatus TransitToStrip::onStart()
   // (action_outcome.hpp). It also carries nav2's error code (onFailed).
   nav_outcome_->Reset();
   nav_result_ = std::make_shared<TransitResultSlot>();
+  nav_abandonment_ = std::make_shared<GoalAbandonment>();
   auto send_opts = rclcpp_action::Client<Nav2Navigate>::SendGoalOptions{};
+  send_opts.goal_response_callback =
+      cancelWhenAbandoned<Nav2Navigate>(nav_client_, nav_abandonment_);
   send_opts.result_callback =
       [slot = nav_outcome_, result_slot = nav_result_](const NavGoalHandle::WrappedResult& result)
   {
@@ -2293,12 +2320,22 @@ BT::NodeStatus TransitToStrip::onRunning()
       RCLCPP_WARN(ctx->node->get_logger(),
                   "TransitToStrip: navigate_to_pose never answered the goal (%.0fs)",
                   waited);
+      // It may still accept the goal later: do not leave it running with no owner.
+      abandonGoal(nav_client_,
+                  nav_handle_,
+                  nav_future_,
+                  nav_abandonment_,
+                  ctx->node->get_logger(),
+                  "TransitToStrip");
       return BT::NodeStatus::FAILURE;
     }
     nav_handle_ = nav_future_.get();
     if (!nav_handle_)
     {
       RCLCPP_WARN(ctx->node->get_logger(), "TransitToStrip: goal rejected");
+      // A busy navigator refuses with no error code; free it if it is busy with a goal that
+      // has no owner any more (see cancel_goal.hpp).
+      cancelAllGoalsQuietly(nav_client_, ctx->node->get_logger(), "TransitToStrip");
       return BT::NodeStatus::FAILURE;
     }
   }
@@ -2401,7 +2438,12 @@ void TransitToStrip::enforceDeadline(const std::shared_ptr<BTContext>& ctx)
 void TransitToStrip::onHalted()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  cancelGoalQuietly(nav_client_, nav_handle_, ctx->node->get_logger(), "TransitToStrip");
+  abandonGoal(nav_client_,
+              nav_handle_,
+              nav_future_,
+              nav_abandonment_,
+              ctx->node->get_logger(),
+              "TransitToStrip");
   nav_handle_.reset();
 }
 
@@ -2483,7 +2525,10 @@ BT::NodeStatus DetourAroundObstacle::onStart()
   nav_handle_.reset();
   // See TransitToStrip::onStart (action_outcome.hpp).
   nav_outcome_->Reset();
+  nav_abandonment_ = std::make_shared<GoalAbandonment>();
   auto send_opts = rclcpp_action::Client<Nav2Navigate>::SendGoalOptions{};
+  send_opts.goal_response_callback =
+      cancelWhenAbandoned<Nav2Navigate>(nav_client_, nav_abandonment_);
   send_opts.result_callback = [slot = nav_outcome_](const NavGoalHandle::WrappedResult& result)
   {
     slot->Record(OutcomeFromResultCode(result.code));
@@ -2529,7 +2574,12 @@ BT::NodeStatus DetourAroundObstacle::onRunning()
 void DetourAroundObstacle::onHalted()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
-  cancelGoalQuietly(nav_client_, nav_handle_, ctx->node->get_logger(), "DetourAroundObstacle");
+  abandonGoal(nav_client_,
+              nav_handle_,
+              nav_future_,
+              nav_abandonment_,
+              ctx->node->get_logger(),
+              "DetourAroundObstacle");
   nav_handle_.reset();
 }
 
