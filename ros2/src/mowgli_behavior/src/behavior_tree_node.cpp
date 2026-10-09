@@ -834,9 +834,33 @@ private:
             // back to area 0 (field report 2026-10-05). IDLE_DOCKED (session
             // ended) and every other state keep the clear.
             if (cmd == HighLevelControl::Request::COMMAND_START &&
-                startClearsSingleAreaMode(context_->last_high_level_status.state_name))
+                startClearsSingleAreaMode(context_->last_high_level_status.state_name,
+                                          context_->resume_after_incomplete_end))
             {
               clearSingleAreaMode(*context_);
+            }
+            // The previous session ended unfinished and EndSession kept its progress: this Start
+            // resumes it. Unless it has aged out — then it begins fresh, like any other Start.
+            if (cmd == HighLevelControl::Request::COMMAND_START &&
+                context_->resume_after_incomplete_end)
+            {
+              context_->resume_after_incomplete_end = false;
+              if (incompleteResumeExpired(context_->resume_after_incomplete_end_time,
+                                          std::chrono::steady_clock::now()))
+              {
+                RCLCPP_INFO(get_logger(),
+                            "HighLevelControl: the kept coverage progress is over %lld h old — "
+                            "starting fresh instead of resuming it",
+                            static_cast<long long>(kIncompleteResumeMaxAge.count()));
+                clearSingleAreaMode(*context_);
+                clear_resume_requested_.store(true);
+              }
+              else
+              {
+                RCLCPP_INFO(get_logger(),
+                            "HighLevelControl: resuming the area that was in progress "
+                            "(coverage progress kept from the last session)");
+              }
             }
           }
           // Let the BT issue stop/retry actions before doing disk I/O. The tick
@@ -877,6 +901,7 @@ private:
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             context_->target_area_index = static_cast<int>(req->area);
+            context_->resume_after_incomplete_end = false;
             context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
             context_->critical_charge_stop_latched = false;
@@ -1472,6 +1497,7 @@ private:
     if (clear_resume_requested_.exchange(false))
     {
       std::lock_guard<std::mutex> lock(context_->context_mutex);
+      context_->resume_after_incomplete_end = false;
       context_->area_completed_swaths.clear();
       context_->area_swath_count.clear();
       context_->area_resume_pose_index.clear();

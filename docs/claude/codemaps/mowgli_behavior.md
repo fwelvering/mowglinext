@@ -62,7 +62,7 @@
 | `docking_nodes.hpp` | 147 | `DockRobot`, `UndockRobot`, `RecordResumeUndockFailure` |
 | `escape_nodes.hpp` | 147 | `EscapeStartBlocked` (`kBladeStateMaxAgeSec=2`, `kMaxTickDtSec=0.5`, `kSignalHoldoffSec=1`) |
 | `recording_nodes.hpp` | 203 | `RecordArea` (`kMinSampleSpacingM=0.05`, `kDefaultRecordRateHz=10`, preview 2 Hz) |
-| `status_nodes.hpp` | ~195 | `PublishHighLevelStatus` (IDLE debounce 3 ticks), `WasRainingAtStart`, `ClearCommand`, `MarkGuardHalt`(reason — sets `guard_halted_reason`), `EndSession`, `IncrementSkippedSwaths` |
+| `status_nodes.hpp` | ~195 | `PublishHighLevelStatus` (IDLE debounce 3 ticks), `WasRainingAtStart`, `ClearCommand`, `MarkGuardHalt`(reason — sets `guard_halted_reason`), `EndSession` (port `keep_incomplete`: for the unfinished endings — `FailedCoverageDock` and `HomeSequence` — it KEEPS the coverage progress, the single-area target and the resume file when any progress was recorded, sets `BTContext::resume_after_incomplete_end`, and zeroes `current_command` before saving so a restart cannot auto-start; the next plain START then continues the area that was in progress — `keepsSingleAreaOnStart` — unless the kept progress is older than `kIncompleteResumeMaxAge`, 24 h, then it starts fresh; a finished mow still wipes everything), `IncrementSkippedSwaths` |
 | `utility_nodes.hpp` | 192 | `SetMowerEnabled`, `WaitForDuration`, `WaitForGpsFix`, `SaveObstacles`, `ResetEmergency` |
 | `calibration_nodes.hpp` | 152 | `RecordUndockStart`, `CalibrateHeadingFromUndock`, `SeedYawFromMotion` |
 | `localization_health.hpp` | 328 | Header-only `LocalizationHealthMonitor` (GNSS accuracy / fix-lost / stale latches + σ_xy divergence backstop) |
@@ -98,6 +98,7 @@
 | `test_obstacle_recovery.cpp` | 305 | 13 tests: `IsObstacleStuck` timing/cap/cooldown against latched collision state |
 | `test_docking_boundary_exempt.cpp` | 232 | 8 tests: `IsDocking` + BoundaryGuard blade-off dock-transit exemption |
 | `test_set_nav2_lifecycle.cpp` | 243 | 7 tests: `SetNav2Lifecycle` gating + fake `manage_nodes` transition |
+| `test_incomplete_resume.cpp` | ~300 | `EndSession(keep_incomplete)` keeps/wipes correctly (progress, targeted area, attempt budgets reset, no START in the file, nothing to keep), the pure helpers (`hasRecordedCoverageProgress`, `keepsSingleAreaOnStart`, 24 h expiry) and structurally that only the two unfinished endings of `main_tree.xml` keep |
 | `test_get_next_unmowed_area.cpp` | ~1.4k | 45 tests: nav-only areas skipped, START_OCCUPIED + guard-halted (`MarkGuardHalt`) passes exempt from the no-progress budget, targeted (`~/start_in_area`) runs stay clipped, `EndSession` boundary, mowglinext#637 phase 2 id-reconciliation + fast-skip generation gating, fleet coordination (excluded areas skipped, preferred-start rotation + wrap, yielded pass exempt, `FollowStrip` yields mid-pass) |
 | `test_start_occupied_retry.cpp` | 348 | 13 tests: `classifyTransitFailure`, consume-once `IsCoverageStartBlocked`, structural check of `StartPoseBlockedRetry` in `main_tree.xml` |
 | `test_coverage_persistence.cpp` | 552 | 22 tests: round-trip (incl. `area_ids`, mowglinext#637 phase 2), header/version, malformed rows, `current_command` restore |
