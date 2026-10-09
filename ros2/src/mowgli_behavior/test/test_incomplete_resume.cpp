@@ -275,12 +275,10 @@ TEST(IncompleteResumeTree, OnlyTheUnfinishedEndingsKeepTheProgress)
   text << in.rdbuf();
   const std::string tree = text.str();
 
+  // The iterator must not be built from a temporary regex (deleted overload).
+  const std::regex keep_re(R"(<EndSession\s+keep_incomplete="true"\s*/>)");
   std::size_t keep = 0;
-  for (std::sregex_iterator
-           it(tree.begin(), tree.end(), std::regex(R"(<EndSession\s+keep_incomplete="true"\s*/>)")),
-       end;
-       it != end;
-       ++it)
+  for (std::sregex_iterator it(tree.begin(), tree.end(), keep_re), end; it != end; ++it)
   {
     ++keep;
   }
