@@ -823,9 +823,9 @@ private:
                                           std::chrono::steady_clock::now()))
               {
                 RCLCPP_INFO(get_logger(),
-                            "HighLevelControl: the kept coverage progress is over %lld h old — "
+                            "HighLevelControl: the kept coverage progress is over %d h old — "
                             "starting fresh instead of resuming it",
-                            static_cast<long long>(kIncompleteResumeMaxAge.count()));
+                            static_cast<int>(kIncompleteResumeMaxAge.count()));
                 clearSingleAreaMode(*context_);
                 clear_resume_requested_.store(true);
               }
