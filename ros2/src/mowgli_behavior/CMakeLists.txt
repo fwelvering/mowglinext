@@ -837,6 +837,40 @@ if(BUILD_TESTING)
     ${tf2_geometry_msgs_TARGETS}
   )
 
+  # ---- test_incomplete_resume ----
+  # Play resumes the area that was in progress when a session ended unfinished:
+  # EndSession(keep_incomplete) keeps the coverage progress (and the single-area target) for
+  # failed coverage / HOME, a plain Start continues it, a finished session still wipes it, and
+  # kept progress older than a day is not resumed. Structural half: only those two endings of
+  # main_tree.xml keep.
+  ament_add_ros_isolated_gtest(test_incomplete_resume
+    test/test_incomplete_resume.cpp
+    $<TARGET_OBJECTS:mowgli_behavior_condition_nodes>
+    $<TARGET_OBJECTS:mowgli_behavior_status_nodes>
+    $<TARGET_OBJECTS:mowgli_behavior_status_snapshot>
+    $<TARGET_OBJECTS:mowgli_behavior_coverage_persistence>
+  )
+  target_include_directories(test_incomplete_resume PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
+  target_compile_definitions(test_incomplete_resume PRIVATE
+    MOWGLI_MAIN_TREE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/trees/main_tree.xml"
+  )
+  target_link_libraries(test_incomplete_resume
+    ${rclcpp_TARGETS}
+    ${behaviortree_cpp_TARGETS}
+    ${mowgli_interfaces_TARGETS}
+    ${nav2_msgs_TARGETS}
+    ${nav_msgs_TARGETS}
+    ${geometry_msgs_TARGETS}
+    ${std_msgs_TARGETS}
+    ${std_srvs_TARGETS}
+    ${tf2_TARGETS}
+    ${tf2_ros_TARGETS}
+    ${tf2_geometry_msgs_TARGETS}
+  )
+
   # Execute the production rain guard with deterministic external actions.
   ament_add_ros_isolated_gtest(test_rain_resume
     test/test_rain_resume.cpp

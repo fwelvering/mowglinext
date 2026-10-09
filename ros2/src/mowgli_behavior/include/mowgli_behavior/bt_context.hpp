@@ -233,6 +233,15 @@ struct BTContext
   /// iterates normally.
   std::optional<uint32_t> single_area_target;
 
+  /// True while coverage progress was KEPT at the end of a session that did not finish
+  /// (EndSession keep_incomplete: failed coverage, HOME) and has not been resumed yet. The next
+  /// plain COMMAND_START then continues it — the area that was in progress, and the single-area
+  /// target it was run under — instead of starting the whole lawn from scratch. Set only by
+  /// EndSession (which also resets it on every other session end), consumed by the START
+  /// handler; see keepsSingleAreaOnStart() and incompleteResumeExpired().
+  bool resume_after_incomplete_end{false};
+  std::chrono::steady_clock::time_point resume_after_incomplete_end_time{};
+
   /// Stable id (mowglinext#637) of the area single_area_target's index
   /// pointed at when it was locked in — captured from the FIRST probe
   /// response after the request was consumed (NOT from the ~/start_in_area
@@ -1006,6 +1015,44 @@ inline bool isChargeHoldState(const std::string& state_name)
 inline bool isResumableHoldState(const std::string& state_name)
 {
   return state_name == "IDLE";
+}
+
+/// Kept coverage progress older than this is not resumed: the grass has grown back, and
+/// "98 % of the area is done" no longer describes the lawn. The next START then begins fresh.
+inline constexpr std::chrono::hours kIncompleteResumeMaxAge{24};
+
+/// True when any coverage progress has been recorded: a finished area, a completed swath or a
+/// mid-path resume cursor. Nothing to keep (or resume) otherwise.
+inline bool hasRecordedCoverageProgress(const BTContext& ctx)
+{
+  if (!ctx.completed_areas.empty() || !ctx.area_resume_pose_index.empty())
+  {
+    return true;
+  }
+  for (const auto& entry : ctx.area_completed_swaths)
+  {
+    if (!entry.second.empty())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Does a plain COMMAND_START keep the single-area clip it finds latched? Yes when the operator
+/// paused a run (isResumableHoldState), and — new — when the previous session ended unfinished
+/// and its progress was kept (BTContext::resume_after_incomplete_end): Play then continues the
+/// area that was in progress rather than widening to the whole lawn.
+inline bool keepsSingleAreaOnStart(const std::string& state_name, bool resume_after_incomplete_end)
+{
+  return isResumableHoldState(state_name) || resume_after_incomplete_end;
+}
+
+/// Has the progress kept by EndSession(keep_incomplete) aged out?
+inline bool incompleteResumeExpired(std::chrono::steady_clock::time_point kept_at,
+                                    std::chrono::steady_clock::time_point now)
+{
+  return now - kept_at > kIncompleteResumeMaxAge;
 }
 
 }  // namespace mowgli_behavior
