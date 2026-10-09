@@ -1,6 +1,8 @@
 # sensors/ — working notes for Claude
 
 Three LiDAR driver wrappers (`lidar-ldlidar/`, `lidar-rplidar/`, `lidar-stl27l/`) run **beside** `mowgli-ros2` as self-contained Docker images and talk to it only over DDS. **The GNSS sidecar image (`gps/Dockerfile`, `gps/start_gps.sh`) is no longer what ships** (2026-09-19, commit `bfd44f1a`, "#625"): the deployed `gps` container now runs an EXTERNAL prebuilt image (`${UNIVERSAL_GNSS_IMAGE}`, `ghcr.io/pepeuch/universal-gnss-ros2-lyrical`) that reads `mowgli_robot.yaml` directly via an inline launcher in `install/compose/docker-compose.gps.yml`; `gps/Dockerfile` and `gps/start_gps.sh` remain in the tree but are no longer built, pushed, or composed by anything. The only ROS node this tree still owns and ships is `gps/mowgli_gnss_bridge`, which is compiled straight into the `mowgli-ros2` image (`ros2/Dockerfile:415`), NOT into a `sensors/gps` sidecar image. Everything else here is a vendored upstream LiDAR driver plus a startup shell script.
+
+The **OpenMower v1 hardware bridge** (`openmower/`, image built here by `sensors-openmower.yml`) is the one image in this tree that owns a ROS node of its own besides `gps/mowgli_gnss_bridge`: `openmower/mowgli_openmower_bridge` (node name `hardware_bridge`) replaces `mowgli-ros2`'s STM32 bridge on stock OpenMower v1 electronics when `HARDWARE_BACKEND=openmower`. Read [`openmower/README.md`](openmower/README.md) — safety section first: the host is in the actuation path.
 It must NOT own: which containers run, device paths, udev symlinks, `docker/.env` or the compose fragments (installer — see `install/CLAUDE.md`); the `GnssStatus.msg` schema (`ros2/src/mowgli_interfaces`); or any consumer of `/gps/*` and `/scan` (see `ros2/CLAUDE.md`). Nothing here publishes TF or a pose — root CLAUDE.md Invariants 1–2.
 
 ## Read next
@@ -17,6 +19,7 @@ It must NOT own: which containers run, device paths, udev symlinks, `docker/.env
 | [`wiki/Sensors.md`](../wiki/Sensors.md) | Operator-facing GNSS contract + the 2026-06 F9P/UM982 field-validation notes. **Partly stale** (see gotchas). |
 | [`wiki/Deployment.md`](../wiki/Deployment.md) | The compose stack these containers sit in, from the operator's side. |
 | [`sensors/README.md`](README.md) | User-facing sensor overview / "how to add a sensor". **Partly stale** (see gotchas). |
+| [`openmower/README.md`](openmower/README.md) | The OpenMower backend: ports, config keys, the host-side wheel loop, and the **safety model** (the host is in the actuation path there). |
 
 ## Build · test · run
 
@@ -27,6 +30,9 @@ It must NOT own: which containers run, device paths, udev symlinks, `docker/.env
 # composes; that runs UNIVERSAL_GNSS_IMAGE instead.
 git submodule update --init --recursive ros2/src/external/universal-gnss
 docker build -t mowgli-gps -f sensors/gps/Dockerfile .
+
+# OpenMower bridge — repo-root context too (copies ros2/src/mowgli_{interfaces,hardware})
+docker build -t mowgli-openmower -f sensors/openmower/Dockerfile .
 
 # lidar-ldlidar — ALSO build context = repo root (it now copies ros2/src/mowgli_interfaces
 # for mowgli_lidar_pwm, issue #569 — same shape as gps, unlike the other two LiDAR images)
@@ -56,7 +62,7 @@ mowgli-gps-logs ; mowgli-lidar-logs
 
 `mowgli_lidar_pwm`'s tests run the same way, in the **`Test mowgli_lidar_pwm` job of `sensors-lidar-ldlidar.yml`** — for the identical reason (it lives outside `ros2/src`, and the image builds with `-DBUILD_TESTING=OFF`). Reproduce locally with a scratch overlay containing `mowgli_interfaces` and this package: `colcon build --packages-up-to mowgli_lidar_pwm && colcon test --packages-select mowgli_lidar_pwm`.
 
-CI: one thin caller per LiDAR image (`.github/workflows/sensors-{lidar-ldlidar,lidar-rplidar,lidar-stl27l}.yml`) → reusable `_sensor-docker.yml` (amd64 + arm64, push-by-digest then manifest merge). **`sensors-gps.yml` is the one exception**: since `bfd44f1a` (2026-09-19) its `build:` job (which used to call `_sensor-docker.yml` and run an in-image smoke test) was deleted entirely — it now has only the `test:` job described above, because the GNSS sidecar ships as an external image and there is nothing of this tree's to build/push for it.
+CI: one thin caller per LiDAR image (`.github/workflows/sensors-{lidar-ldlidar,lidar-rplidar,lidar-stl27l}.yml`) → reusable `_sensor-docker.yml` (amd64 + arm64, push-by-digest then manifest merge). **`sensors-gps.yml` is the one exception**: since `bfd44f1a` (2026-09-19) its `build:` job (which used to call `_sensor-docker.yml` and run an in-image smoke test) was deleted entirely — it now has only the `test:` job described above, because the GNSS sidecar ships as an external image and there is nothing of this tree's to build/push for it. `sensors-openmower.yml` builds the OpenMower bridge image through `_sensor-docker.yml` and runs the package's gtests and the v1 hardware simulation in its own jobs — the only place either runs.
 
 ## Conventions
 
@@ -69,6 +75,8 @@ CI: one thin caller per LiDAR image (`.github/workflows/sensors-{lidar-ldlidar,l
 
 ## Component-specific gotchas
 
+- **openmower build context = repo root** as well, and `mowgli_openmower_bridge` links `mowgli_hardware::mowgli_hardware_core` (exported from `ros2/src/mowgli_hardware/CMakeLists.txt`) for COBS/CRC/serial. Build `mowgli_hardware` with `-DBUILD_TESTING=OFF` in that scratch workspace: its tests include a firmware header by relative path that only resolves inside `ros2/`.
+- **`sensors/openmower/.clang-format` is a copy of `ros2/.clang-format`** because `ros2/scripts/format.sh` only walks `ros2/src`; format the package with `clang-format --style=file` by hand.
 - **gps build context = repo root.** `sensors/gps/Dockerfile:37–46` copies `ros2/src/mowgli_interfaces` + seven universal-gnss packages; `docker build sensors/gps/` fails. CI passes `context: .` with `dockerfile: sensors/gps/Dockerfile`.
 - **universal-gnss is a submodule on the mowglinext FORK**, branch `main` (`.gitmodules`). Both issue #395 fixes (GLONASS-1230 optional-for-RTK correction health, UM980 `MODE ROVER UAV` default) are now upstream in that fork's main, so the old stacked `fix/rover-dynamic-mode-uav` branch is gone. A bump means re-pinning the gitlink, not just editing the branch line; with the submodule uninitialised the Dockerfile's seven `COPY`s have nothing to copy and the build fails.
 - **`install/compose/docker-compose.gps.yml` no longer passes any `GNSS_*` env vars at all** (removed by `bfd44f1a`, 2026-09-19): the `gps` service runs the external `UNIVERSAL_GNSS_IMAGE` via an inline Python `command:` block that reads `/config/mowgli_robot.yaml` directly — there is no env passthrough left to mask. (The note below about `start_gps.sh`'s own YAML→env→default resolution still describes that ORPHANED script correctly, in isolation — it just no longer runs in the deployed container.)
