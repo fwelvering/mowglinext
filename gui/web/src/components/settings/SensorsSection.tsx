@@ -17,8 +17,8 @@ export const SensorsSection: React.FC<Props> = ({ values, onChange }) => {
     const handleLidarToggle = (enabled: boolean) => {
         onChange("lidar_enabled", enabled);
     };
-    const lidarEnabled = (values.lidar_enabled as boolean | undefined) ?? false;
-    const pwmEnabled = (values.lidar_pwm_enabled as boolean | undefined) ?? false;
+    const lidarEnabled = values.lidar_enabled ?? false;
+    const pwmEnabled = values.lidar_pwm_enabled ?? false;
 
     return (
         <div>
