@@ -42,7 +42,7 @@ for(const example of ["yardforce500","custom-angular","rm1000"] as const){
         await page.evaluate(async()=>{
             await Promise.all([...document.querySelectorAll('image')].map(e=>{const img=new Image();img.src=e.getAttribute('href')!;return img.decode();}));
         });
-        await expect(preview.locator('[data-layer="shell-art"]').first()).toHaveAttribute("width",String(values.chassis_width));
+        await expect(preview.locator('[data-layer="shell-art"]').first()).toHaveAttribute("data-physical-width",String(values.chassis_width));
         await page.waitForTimeout(500); // Let scroll and toggle transitions settle for the capture.
         await page.screenshot({path:`${output}/${example}-hardware.png`,fullPage:true});
         if(example === "custom-angular"){

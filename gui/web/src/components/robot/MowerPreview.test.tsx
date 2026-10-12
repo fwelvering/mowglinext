@@ -17,7 +17,7 @@ describe("docked setup preview", () => {
         rerender(<MowerView robot={robot} view={view} showDock dockGeometry={geometry}/>);
         const dock = container.querySelector('[data-layer="styled-dock"]')!;
         expect(dock.parentElement).toHaveAttribute("opacity", "0.7");
-        expect(dock.querySelector("svg")).toHaveAttribute("width", view === "top" ? "0.55" : "0.8");
+        expect(dock.querySelector("svg")).toHaveAttribute("data-physical-width", view === "top" ? "0.55" : "0.8");
         const transform = dock.getAttribute("transform");
         rerender(<MowerView robot={robot} view={view} showDock dockGeometry={geometry} transparent/>);
         expect(container.querySelector('[data-layer="styled-dock"]')?.getAttribute("transform")).toBe(transform);

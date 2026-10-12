@@ -102,8 +102,8 @@ test("chassis edits resize the assembly without changing the wheel diameter",asy
     await page.getByText("Chassis & Geometry",{exact:true}).click();
     await page.locator("#setting-chassis_length").fill("0.8");
     await page.locator("#setting-chassis_length").press("Tab");
-    await expect(page.getByTestId("mower-top").locator('[data-layer="shell-art"]')).toHaveAttribute("height","0.8");
-    await expect(page.getByTestId("mower-side").locator('[data-layer="shell-art"]')).toHaveAttribute("width","0.8");
+    await expect(page.getByTestId("mower-top").locator('[data-layer="shell-art"]')).toHaveAttribute("data-physical-height","0.8");
+    await expect(page.getByTestId("mower-side").locator('[data-layer="shell-art"]')).toHaveAttribute("data-physical-width","0.8");
     expect(Number(await page.getByRole("spinbutton",{name:/Wheel Radius/}).inputValue())).toBe(.1);
 });
 
@@ -155,24 +155,24 @@ test("all shell dimensions describe opaque chassis edges, excluding atlas margin
     // The same measured edge crop occupies the configured metric extent.
     const top=page.getByTestId("mower-top").locator('[data-layer="shell-art"]');
     const side=page.getByTestId("mower-side").locator('[data-layer="shell-art"]');
-    await expect(top).toHaveAttribute("width","0.45");
-    await expect(top).toHaveAttribute("height","0.6");
-    await expect(side).toHaveAttribute("width","0.6");
-    await expect(side).toHaveAttribute("height","0.19");
+    await expect(top).toHaveAttribute("data-physical-width","0.45");
+    await expect(top).toHaveAttribute("data-physical-height","0.6");
+    await expect(side).toHaveAttribute("data-physical-width","0.6");
+    await expect(side).toHaveAttribute("data-physical-height","0.19");
 });
 
 test("Yardforce vertical offset lowers the shell without shrinking it or moving axles",async({page})=>{
     await page.goto("/#/settings?section=hardware");
     const side=page.getByTestId("mower-side");
     const shell=side.locator('[data-layer="shell-art"]');
-    await expect(shell).toHaveAttribute("height","0.19");
-    expect(Number(await shell.getAttribute("y"))).toBeCloseTo(-.14);
+    await expect(shell).toHaveAttribute("data-physical-height","0.19");
+    expect(Number(await shell.getAttribute("data-physical-y"))).toBeCloseTo(-.14);
     const wheelTransform=await side.locator('[data-layer="wheels"] > g').getAttribute("transform");
     await page.getByText("Chassis & Geometry",{exact:true}).click();
     const input=page.getByRole("spinbutton",{name:"Chassis vertical offset, m"});
     await input.fill("-0.06");await input.press("Tab");
-    expect(Number(await shell.getAttribute("y"))).toBeCloseTo(-.13);
-    await expect(shell).toHaveAttribute("height","0.19");
+    expect(Number(await shell.getAttribute("data-physical-y"))).toBeCloseTo(-.13);
+    await expect(shell).toHaveAttribute("data-physical-height","0.19");
     await expect(side.locator('[data-layer="wheels"] > g')).toHaveAttribute("transform",wheelTransform!);
     await expect(side.locator('[data-sensor="gps"]')).toHaveAttribute("data-z","0.2");
 });
@@ -206,8 +206,8 @@ test("full application hardware preset gallery on desktop and mobile",async({pag
             await expect(page.getByTestId("mower-top").locator('[data-layer="styled-dock"]')).toHaveCount(1);
             const side=page.getByTestId("mower-side");
             if(preset.defaults.chassis_height !== undefined){
-                await expect(side.locator('[data-layer="shell-art"]')).toHaveAttribute("height",String(preset.defaults.chassis_height));
-                expect(Number(await side.locator('[data-layer="shell-art"]').getAttribute("y"))).toBeCloseTo(-preset.defaults.chassis_z_offset-preset.defaults.chassis_height);
+                await expect(side.locator('[data-layer="shell-art"]')).toHaveAttribute("data-physical-height",String(preset.defaults.chassis_height));
+                expect(Number(await side.locator('[data-layer="shell-art"]').getAttribute("data-physical-y"))).toBeCloseTo(-preset.defaults.chassis_z_offset-preset.defaults.chassis_height);
                 expect(Number(await page.getByRole("spinbutton",{name:"Wheel Track, m",exact:true}).inputValue())).toBe(preset.defaults.wheel_track);
             }
             await page.getByTestId("mower-preview").scrollIntoViewIfNeeded();
@@ -230,8 +230,8 @@ test("chassis height preserves the bottom offset and wheel spacing is the preset
     await page.locator("#setting-chassis_height").fill("0.25");
     await page.locator("#setting-chassis_height").press("Tab");
     const side=page.getByTestId("mower-side").locator('[data-layer="shell-art"]');
-    await expect(side).toHaveAttribute("height","0.25");
-    expect(Number(await side.getAttribute("y"))).toBeCloseTo(-.20);
+    await expect(side).toHaveAttribute("data-physical-height","0.25");
+    expect(Number(await side.getAttribute("data-physical-y"))).toBeCloseTo(-.20);
     const positions=await page.getByTestId("mower-top").locator('[data-layer="wheels"] > g').evaluateAll(nodes=>nodes.map(n=>Number(n.getAttribute("transform")!.match(/translate\(([^ ]+)/)![1])));
     expect(positions[1]-positions[0]).toBeCloseTo(.325);
 });
@@ -249,8 +249,8 @@ test("Worx shallow chassis preview and disabled scanner artwork", async ({page})
         JSON.stringify({style: "worx", dockAppearance: "worx", transparent: false})));
     await page.goto("/#/settings?section=hardware");
     const preview = page.getByTestId("mower-preview");
-    await expect(preview.locator('[data-layer="shell-art"]').last()).toHaveAttribute("height", "0.14");
-    expect(Number(await preview.locator('[data-layer="shell-art"]').last().getAttribute("y"))).toBeCloseTo(-.07);
+    await expect(preview.locator('[data-layer="shell-art"]').last()).toHaveAttribute("data-physical-height", "0.14");
+    expect(Number(await preview.locator('[data-layer="shell-art"]').last().getAttribute("data-physical-y"))).toBeCloseTo(-.07);
     await expect(preview.locator('[data-sensor="lidar"]')).toHaveCount(0);
     await preview.scrollIntoViewIfNeeded();
     await page.evaluate(async () => Promise.all([...document.querySelectorAll('image')].map(e => {

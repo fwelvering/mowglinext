@@ -515,3 +515,22 @@ without this build identity an updated mask or sprite can remain stale after a
 normal reload. Use the helper for full-size sources, SVG masks and compact map
 assets alike. Pose changes do not alter the URL. Rebuild/deploy the web bundle
 when replacing artwork; copying a changed image under an old build ID is insufficient.
+
+
+## Cross-browser artwork coordinates
+
+Keep shell and part rasters inside the shared `ArtworkViewport`. Its nested SVG
+uses source-pixel dimensions; a parent group maps that viewport to physical
+metres. Tiny metre-sized nested viewports caused Firefox to displace the raster
+while the sensor editor position marker remained correct. Putting the transform
+on the nested SVG itself instead of its parent caused WebKit clipping. Source
+crops, physical bounds, sensor mounting transforms and robot dimensions stay
+unchanged. New artwork should use this renderer rather than another SVG wrapper.
+
+Sensor highlights use two translucent geometric strokes behind the image. Avoid
+restoring the SVG morphology/blur filter: WebKit dropped the sensor raster through
+that filter. The shared renderer also covers blade, wheel and dock artwork.
+
+The opt-in `playwright.robot-artwork.config.ts` suite checks actual raster centres
+against independently rendered sensor position markers, not just DOM transforms.
+See the end-to-end test README for commands and the browser coverage limits.

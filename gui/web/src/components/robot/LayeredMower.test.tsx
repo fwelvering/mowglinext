@@ -29,8 +29,8 @@ describe("layered mower",()=>{
         const next=previewRobotGeometry(robot,{chassis_length:.8,chassis_width:.5});
         rerender(<svg><LayeredMower robot={next} style="yardforce" transparent/></svg>);
         const shell=container.querySelector('[data-layer="shell-art"]')!;
-        expect(shell).toHaveAttribute("width","0.5");
-        expect(shell).toHaveAttribute("height","0.8");
+        expect(shell).toHaveAttribute("data-physical-width","0.5");
+        expect(shell).toHaveAttribute("data-physical-height","0.8");
         expect(container.querySelector('[data-layer="wheels"]')!.outerHTML).toBe(wheel);
     });
 });
@@ -84,8 +84,8 @@ it("map mode renders only shell, drive wheels, GPS and LiDAR",()=>{
 
 it("map derivatives retain all physical bounds and axle transforms",()=>{
     const {container,rerender}=render(<svg><LayeredMower robot={robot} style="yardforce" transparent/></svg>);
-    const metricAttributes=()=>Array.from(container.querySelectorAll('[data-layer="shell-art"], [data-part-art] > svg, [data-layer="wheels"] > g')).map(node=>
-        ["x","y","width","height","viewBox","transform"].map(name=>node.getAttribute(name)));
+    const metricAttributes=()=>Array.from(container.querySelectorAll('[data-layer="shell-art"], [data-part-art] svg, [data-layer="wheels"] > g')).map(node=>
+        ["data-physical-x","data-physical-y","data-physical-width","data-physical-height","x","y","width","height","viewBox","transform"].map(name=>node.getAttribute(name)));
     const before=metricAttributes();
     rerender(<svg><LayeredMower robot={robot} style="yardforce" transparent artwork="map"/></svg>);
     expect(metricAttributes()).toEqual(before);
@@ -110,8 +110,8 @@ it("registers the Worx side panel against the full chassis including its hidden 
     const {container, rerender} = render(<svg><LayeredMower robot={robot} style="worx" view="side" transparent={false}/></svg>);
     const shell = container.querySelector('[data-layer="shell-art"]')!;
     expect(shell).toHaveAttribute("viewBox", frame.join(" "));
-    expect(Number(shell.getAttribute("width"))).toBe(robot.baseLength);
-    expect(Number(shell.getAttribute("x"))).toBe(-robot.chassisCenterX - robot.baseLength / 2);
+    expect(Number(shell.getAttribute("data-physical-width"))).toBe(robot.baseLength);
+    expect(Number(shell.getAttribute("data-physical-x"))).toBe(-robot.chassisCenterX - robot.baseLength / 2);
     rerender(<svg><LayeredMower robot={robot} style="worx" view="side" transparent artwork="map"/></svg>);
     const compact = container.querySelector('[data-layer="shell-art"]')!;
     expect(compact).toHaveAttribute("viewBox", frame.join(" "));

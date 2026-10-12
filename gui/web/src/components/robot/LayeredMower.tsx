@@ -1,9 +1,10 @@
+import {ArtworkViewport} from "./ArtworkViewport";
 import {artworkUrl} from "./artworkUrl";
 import {usePaintedShell} from "./usePaintedShell";
 import {PartSprite} from "./PartSprite";
 import {sensorArtworkProjection} from "./sensorArtworkProjection";
 import {SHELLS, shellProjectionFrame} from "./shellAssets";
-import {memo, useId, useState} from "react";
+import {memo, useState} from "react";
 import type {RobotGeometry} from "../../hooks/useRobotDescription";
 import type {MowerStyle} from "../../hooks/useMowerVisual";
 import {sensorCorners, type RobotView, type SensorGeometry} from "../../utils/robotModel";
@@ -19,32 +20,35 @@ function ShellSprite({style, view, x, y, width, height, artwork, colour}: {
     const cropped = artwork === "map" || !!painted;
     return <>
         {!loaded && <rect x={x} y={y} width={width} height={height} rx={Math.min(width,height)*.18} fill="#343e40"/>}
-        <svg data-layer="shell-art" x={x} y={y} width={width} height={height}
+        <ArtworkViewport data-layer="shell-art" x={x} y={y} width={width} height={height}
         data-paint-colour={colour || "original"} data-paint-ready={!!painted}
-        viewBox={[sx,sy,sw,sh].join(" ")} preserveAspectRatio="none" overflow="hidden">
+        crop={[sx,sy,sw,sh]}>
         <rect data-shell-bounds x={sx} y={sy} width={sw} height={sh} fill="none"/>
         <image onLoad={()=>setLoaded(true)} onError={()=>setLoaded(false)} href={painted ?? artworkUrl(artwork === "map" ? `map/${style}-${view}.webp` : shell.files?.[view] ?? `${style}.png`)}
             x={cropped ? sx : 0} y={cropped ? sy : 0}
             width={cropped ? sw : sourceSize[0]} height={cropped ? sh : sourceSize[1]}/>
-    </svg></>;
+    </ArtworkViewport></>;
 }
 
 /** Sensor visuals use real URDF sizes. Box faces are projected after all three
  * mounting rotations, so IMU roll/pitch are not lost in the side view. */
 export function SensorGraphic({sensor, view, highlight = false, artwork = "full"}: {sensor: SensorGeometry; view: RobotView; highlight?: boolean; artwork?:"full"|"map"}) {
-    const glowId = useId();
     const projection = sensorArtworkProjection(sensor,view);
     const points = sensorCorners(sensor,view);
     const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
     return <g data-sensor={sensor.id} data-x={sensor.x} data-y={sensor.y} data-z={sensor.z}>
-        {highlight && <defs><filter id={glowId} x="-25%" y="-25%" width="150%" height="150%" colorInterpolationFilters="sRGB">
-            <feMorphology in="SourceAlpha" operator="dilate" radius=".0012" result="outline"/>
-            <feGaussianBlur in="outline" stdDeviation=".0007" result="soft"/>
-            <feFlood floodColor="#9af4d0" floodOpacity=".85"/>
-            <feComposite in2="soft" operator="in"/>
-            <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter></defs>}
-        <g transform={projection.transform} filter={highlight ? `url(#${glowId})` : undefined}>
+        <g transform={projection.transform}>
+            {/* Two translucent strokes give a soft edge without SVG filters:
+                WebKit can drop the entire sensor raster in the filter path. */}
+            {highlight && <g data-sensor-highlight fill="none" stroke="#9af4d0" pointerEvents="none">
+                {[{width:.004, opacity:.18}, {width:.0012, opacity:.85}].map(edge =>
+                    sensor.id === "lidar" && projection.view === "top"
+                        ? <ellipse key={edge.width} rx={projection.width/2} ry={projection.height/2}
+                            strokeWidth={edge.width} opacity={edge.opacity}/>
+                        : <rect key={edge.width} x={-projection.width/2} y={-projection.height/2}
+                            width={projection.width} height={projection.height} rx={Math.min(.003,projection.height/4)}
+                            strokeWidth={edge.width} opacity={edge.opacity}/>) }
+            </g>}
             <PartSprite artwork={artwork} part={sensor.id} view={projection.view} width={projection.width} height={projection.height}
                 fallback={<rect x={-projection.width/2} y={-projection.height/2} width={projection.width} height={projection.height}
                     rx={.003} fill={sensor.id === "imu" ? "#326655" : "#7c9187"}/>}/>
