@@ -7,9 +7,6 @@
 import {readFileSync, writeFileSync} from "node:fs";
 import {fileURLToPath, pathToFileURL} from "node:url";
 
-const SCHEMA_PATH = fileURLToPath(new URL("../../asserts/mower_config.schema.json", import.meta.url));
-const OUT_PATH = fileURLToPath(new URL("../src/types/settings.generated.ts", import.meta.url));
-
 /** The TypeScript type of one schema property. */
 const tsType = (property) => {
     switch (property.type) {
@@ -64,8 +61,12 @@ export const renderSettingsTypes = (schema) => {
     ].join("\n");
 };
 
+// Run as a script (`npm run generate:settings-types`). Importing the module, as the drift test does,
+// only needs renderSettingsTypes and must not touch the file system.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
-    writeFileSync(OUT_PATH, renderSettingsTypes(schema));
-    console.log(`wrote ${OUT_PATH}`);
+    const schemaPath = fileURLToPath(new URL("../../asserts/mower_config.schema.json", import.meta.url));
+    const outPath = fileURLToPath(new URL("../src/types/settings.generated.ts", import.meta.url));
+    const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+    writeFileSync(outPath, renderSettingsTypes(schema));
+    console.log(`wrote ${outPath}`);
 }
