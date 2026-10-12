@@ -3,11 +3,12 @@ import { Alert, Card, Col, Form, InputNumber, Row, Space, Switch, Typography } f
 import { AimOutlined, RadarChartOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { RobotComponentEditor } from "../RobotComponentEditor.tsx";
+import type {SettingsValues} from "../../types/settings.generated";
 
 const { Text, Paragraph } = Typography;
 
 type Props = {
-    values: Record<string, any>;
+    values: SettingsValues;
     onChange: (key: string, value: any) => void;
 };
 

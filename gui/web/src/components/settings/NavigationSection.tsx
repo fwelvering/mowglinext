@@ -3,11 +3,12 @@ import { Card, Col, Form, InputNumber, Row, Space, Typography } from "antd";
 import { CompassOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import { SettingFieldLabel } from "./SettingFieldLabel.tsx";
+import type {SettingsValues} from "../../types/settings.generated";
 
 const { Text, Paragraph } = Typography;
 
 type Props = {
-    values: Record<string, any>;
+    values: SettingsValues;
     onChange: (key: string, value: any) => void;
     isOverridden?: (key: string) => boolean;
     hasDefault?: (key: string) => boolean;
@@ -127,7 +128,7 @@ export const NavigationSection: React.FC<Props> = ({
                         <Col xs={12} sm={8}>
                             <Form.Item htmlFor="setting-obstacle_transit_margin_m" data-setting-key="obstacle_transit_margin_m" label={fieldLabel("obstacle_transit_margin_m", t("settingsNavigation.obstacleTransitMargin"))} tooltip={t("settingsNavigation.obstacleTransitMarginTooltip")}>
                                 <InputNumber aria-label={t("settingsNavigation.obstacleTransitMargin") + ", m"} aria-description={t("settingsNavigation.obstacleTransitMarginTooltip")}  id="setting-obstacle_transit_margin_m"
-                                    value={values.obstacle_transit_margin_m as number | undefined}
+                                    value={values.obstacle_transit_margin_m}
                                     onChange={(v) => onChange("obstacle_transit_margin_m", v)}
                                     min={0} max={1.0} step={0.05} precision={2}
                                     style={{ width: "100%" }} addonAfter="m"
