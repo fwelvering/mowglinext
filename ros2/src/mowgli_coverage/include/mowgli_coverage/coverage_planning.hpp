@@ -245,6 +245,8 @@ struct BoustrophedonPlan
 // the boundary — plus swath_turn_envelope, a tighter ring-bound
 // connector_max_headland_passes caps for mainland swath U-turns only (see the
 // BoustrophedonPlan field docs).
+struct PivotJoinLimits;  // defined below, with the pivot helpers
+
 // Deterministic Auto heading; degenerate clips never define an angle.
 std::optional<double> longestValidSwathAngle(const f2c::types::Swaths& swaths);
 
@@ -256,6 +258,17 @@ std::optional<double> longestValidSwathAngle(const f2c::types::Swaths& swaths);
 //                pickRingClosure), and plan.rings[0] is guaranteed to be the
 //                outer perimeter, so the route starts there. Ignored with the
 //                ring stage off (no ring to start on).
+//   corner_pivot_limits — optional (default: none, which is bit-for-bit the
+//                historical behaviour: every ring corner sharper than 30° is
+//                rounded with a forward arc). With pivots enabled
+//                (sweep_radius > 0) a ring corner sharper than 60° where the
+//                pivot sweep fits (pivotSweepFits) is NOT rounded: it stays a
+//                sharp vertex, so the ring reaches the very corner, and
+//                buildContinuousSubPaths turns it into an in-place pivot corner
+//                (pivotSharpCorners). A fillet cuts the corner off and leaves
+//                the tip uncut. Corners where the sweep does not fit (beside a
+//                drawn obstacle, too far past the recorded line) and corners
+//                between 30° and 60° keep today's arc.
 BoustrophedonPlan planBoustrophedon(
     const f2c::types::Cell& field_cell,
     double op_width,
@@ -268,7 +281,8 @@ BoustrophedonPlan planBoustrophedon(
     double min_turn_radius = 0.20,
     bool perpendicular = false,
     int connector_max_headland_passes = 0,
-    const std::optional<std::pair<double, double>>& start_hint = std::nullopt);
+    const std::optional<std::pair<double, double>>& start_hint = std::nullopt,
+    const PivotJoinLimits* corner_pivot_limits = nullptr);
 
 // Where a closed headland ring starts and ends — the ring's "closure". `open_loop`
 // is the ring's corner vertices WITHOUT the repeated closing vertex (>= 3).

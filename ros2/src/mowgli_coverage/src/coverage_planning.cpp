@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -794,6 +795,16 @@ std::vector<std::pair<double, double>> enforcePivotCornerContract(
   return out;
 }
 
+// A corner sharper than this is an in-place pivot corner wherever the pivot sweep fits (see
+// pivotSharpCorners and BoustrophedonPlan's corner_pivot_limits): a ring corner that sharp is NOT
+// rounded in the ring stage and an unrounded one is pivoted in buildContinuousSubPaths. Below it
+// FTC turns through the corner while moving (slowing) without cutting it, and the fillet stays.
+constexpr double kSharpCornerPivotRad = 60.0 * M_PI / 180.0;
+// The outermost ring's convex corner vertices can poke a few cm PAST the recorded line (#388, the
+// clamp in buildContinuousSubPaths pulls them back). The ring stage judges the pivot sweep before
+// that clamp, so it allows this much extra reach: after the clamp the pivot only fits better.
+constexpr double kRingCornerPokeSlackM = 0.05;
+
 // Round any corner of `pts` whose turn angle exceeds `max_turn_rad` with a
 // circular fillet tangent to both edges (cusp-free in/out), so the WHOLE path
 // has no >90° turn. Such corners are intrinsic to the headland rings, which
@@ -812,7 +823,8 @@ std::vector<std::pair<double, double>> roundSharpCorners(
     double max_turn_rad,
     double fillet_r,
     double min_radius,
-    double step)
+    double step,
+    const std::function<bool(const std::pair<double, double>&, double)>& keep_sharp = {})
 {
   if (pts.size() < 3)
   {
@@ -843,6 +855,13 @@ std::vector<std::pair<double, double>> roundSharpCorners(
     c = std::max(-1.0, std::min(1.0, c));
     const double turn = std::acos(c);  // exterior turn angle [0, π]
     if (turn <= max_turn_rad)
+    {
+      out.push_back(B);
+      continue;
+    }
+    // The caller wants this corner SHARP (it will be an in-place pivot corner): a fillet
+    // would cut the tip off and leave it uncut.
+    if (keep_sharp && keep_sharp(B, turn))
     {
       out.push_back(B);
       continue;
@@ -1239,9 +1258,20 @@ BoustrophedonPlan planBoustrophedon(const f2c::types::Cell& field_cell,
                                     double min_turn_radius,
                                     bool perpendicular,
                                     int connector_max_headland_passes,
-                                    const std::optional<std::pair<double, double>>& start_hint)
+                                    const std::optional<std::pair<double, double>>& start_hint,
+                                    const PivotJoinLimits* corner_pivot_limits)
 {
   BoustrophedonPlan plan;
+  // Ring corners the robot will pivot at stay sharp (see the ring stage below). The sweep is
+  // judged with a few cm of slack for the outermost ring's pre-clamp corner poke.
+  const bool pivot_ring_corners =
+      corner_pivot_limits != nullptr && corner_pivot_limits->sweep_radius > 0.0;
+  PivotJoinLimits ring_pivot_limits;
+  if (pivot_ring_corners)
+  {
+    ring_pivot_limits = *corner_pivot_limits;
+    ring_pivot_limits.boundary_margin += kRingCornerPokeSlackM;
+  }
   // Polygon area the planned-coverage fraction is taken over (the operator's
   // authorised area, before any inset). Instrumentation only.
   plan.diagnostics.field_area = field_cell.area();
@@ -1621,13 +1651,26 @@ BoustrophedonPlan planBoustrophedon(const f2c::types::Cell& field_cell,
             const auto& fillet_boundary =
                 plan.safe_boundary.size() >= 3 ? plan.safe_boundary : field_outer_pts;
             constexpr double kRingCornerThreshold = 30.0 * M_PI / 180.0;
+            // Corners the robot will PIVOT at are left sharp so the ring reaches the very
+            // corner (see corner_pivot_limits in coverage_planning.hpp).
+            std::function<bool(const std::pair<double, double>&, double)> keep_sharp;
+            if (pivot_ring_corners)
+            {
+              keep_sharp =
+                  [&ring_pivot_limits](const std::pair<double, double>& corner, double turn)
+              {
+                return turn > kSharpCornerPivotRad &&
+                       pivotSweepFits(corner.first, corner.second, ring_pivot_limits);
+              };
+            }
             auto rounded = roundSharpCorners(sparse,
                                              fillet_boundary,
                                              plan.safe_holes,
                                              kRingCornerThreshold,
                                              std::max(2.0 * min_turn_radius, min_turn_radius),
                                              std::max(0.02, min_turn_radius),
-                                             0.03);
+                                             0.03,
+                                             keep_sharp);
             loop = densifyPolyline(rounded, kDensifyStep);
           }
         }
@@ -2462,9 +2505,6 @@ std::vector<std::vector<std::pair<double, double>>> buildContinuousSubPaths(
   // into a sub-trackable loop. Applied PER sub-path (each is independently
   // continuous; a fillet must never span a break).
   constexpr double kCornerThreshold = 88.0 * M_PI / 180.0;
-  // Unrounded corners sharper than this become in-place pivot corners. Below it
-  // FTC turns through the corner while moving (slowing) without cutting it.
-  constexpr double kSharpCornerPivotRad = 60.0 * M_PI / 180.0;
   const double fillet_r = std::max(turn_radius * 0.5, min_radius);
   std::vector<std::vector<std::pair<double, double>>> out;
   out.reserve(subpaths.size());
