@@ -6,7 +6,7 @@
 
 ## Where to look
 
-Managed installer and updater share `install/compose/stack.json` via the Go `installer-stack` command. Releases ship a checksummed Compose bundle; installed releases survive older-checkout installer reruns. See `docs/UPDATES.md` for selection, ownership and migration constraints.
+Managed installer and updater share `install/compose/stack.json` via the Go `installer-stack` command. Its `backend` group (`none` = Mowgli board, `openmower` = `docker-compose.openmower.yml`) is derived by the worker from `docker/.env` `HARDWARE_BACKEND` on every run, never preserved; the OpenMower backend waives the release `firmware_protocol` check (`FirmwareProtocolExempt`), MAVROS stays unmanaged. Releases ship a checksummed Compose bundle; installed releases survive older-checkout installer reruns. See `docs/UPDATES.md` for selection, ownership and migration constraints.
 
 Coordinated updates: `install/deployment.json` owns the publication build list and per-image compatibility contracts and verified service projection. Installed Compose fragments declare `garden.mowgli.update.*` labels; absent optional services stay absent. See `docs/UPDATES.md` for dependency, health and supported persistence contracts.
 
@@ -54,7 +54,7 @@ Coordinated updates: `install/deployment.json` owns the publication build list a
 | `lib/progress.sh` | 212 | Step progress bar/spinner, install log capture (`init_install_logs`) |
 | `lib/gps.sh` | ~110 | `pick_serial_by_id`, `preset_key_loaded`, `configure_gps` — transport + port ONLY; receiver family/baud are first-boot defaults, the sidecar (`gnss_config_apply`) and GUI own the receiver configuration |
 | `lib/platform.sh` | 163 | CPU arch / board family detection, `assert_supported_platform` |
-| `lib/uart.sh` | ~215 | Boot-config line upsert; `required_uart_overlays()` derives which of `dtoverlay=uart1..5` the configured GNSS/LiDAR/TF-Luna ports actually need (issue #631 — used to enable all five unconditionally) — runs after GPS/LiDAR/rangefinder config, not before; Bluetooth disable, Pi-5 USB/fan params |
+| `lib/uart.sh` | ~215 | Boot-config line upsert; `required_uart_overlays()` derives which of `dtoverlay=uart1..5` the configured GNSS/LiDAR/TF-Luna ports actually need (issue #631 — used to enable all five unconditionally) plus the OpenMower LowLevel/xESC ports (`openmower_uart_assignments`) — runs after GPS/LiDAR/rangefinder config, not before; `free_uarts_from_serial_console` strips `console=serial0` from `cmdline.txt` and masks `serial-getty` on every UART in use; `uart_port_is_free`/`pick_free_uart_port` refuse a GNSS/LiDAR port an OpenMower controller is wired to (`default_gnss_uart_device` in `config.sh`: `ttyAMA2` on OpenMower, else `ttyAMA4`); Bluetooth disable, Pi-5 USB/fan params |
 | `lib/common.sh` | 135 | `info/warn/fail/error/step/prompt/confirm`, `detect_uart_ports`, `pick_uart_port`, `require_root*` |
 | `lib/motd.sh` | 127 | Writes `/etc/profile.d/mowgli-motd.sh` (reads `~/mowglinext/docker/.env`) |
 | `lib/lidar.sh` | 120 | LiDAR type/connection/baud selection + `LIDAR_UART_RULE` |

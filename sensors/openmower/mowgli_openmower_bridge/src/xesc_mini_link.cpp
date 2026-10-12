@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "mowgli_openmower_bridge/blade_speed.hpp"
+
 namespace mowgli_openmower_bridge
 {
 
@@ -45,6 +47,7 @@ void XescMiniLink::Poll(SteadyClock::time_point now)
   }
 
   uint8_t buf[kReadChunk];
+  SteadyClock::time_point read_at = now;  // when the replies below were read
   while (true)
   {
     const ssize_t n = serial_.read(buf, kReadChunk);
@@ -59,6 +62,7 @@ void XescMiniLink::Poll(SteadyClock::time_point now)
     {
       break;
     }
+    read_at = SteadyClock::now();
     deframer_.Feed(buf, static_cast<std::size_t>(n));
   }
 
@@ -66,7 +70,7 @@ void XescMiniLink::Poll(SteadyClock::time_point now)
   {
     if (const auto parsed = vesc::ParsePayload(payload->data(), payload->size()))
     {
-      HandlePayload(*parsed, now);
+      HandlePayload(*parsed, read_at);
     }
   }
 
@@ -82,7 +86,10 @@ void XescMiniLink::Poll(SteadyClock::time_point now)
   }
   else if (SendFrame(vesc::BuildGetValuesRequest()))
   {
-    values_requests_.OnRequest(now);
+    // The time the request actually left, not the control tick's start: a
+    // bridge stalled in between would otherwise date the reply (values
+    // measured on arrival) to before the stall — see xesc_2040_link.cpp.
+    values_requests_.OnRequest(SteadyClock::now());
   }
 
   telemetry_.connected =
@@ -108,7 +115,7 @@ void XescMiniLink::HandlePayload(const vesc::ParsedPayload& parsed, SteadyClock:
       telemetry_.temp_motor = parsed.values.temp_motor;
       telemetry_.current_in = parsed.values.current_in;
       telemetry_.duty = parsed.values.duty;
-      telemetry_.rpm = parsed.values.erpm / static_cast<double>(pole_pairs_);
+      telemetry_.rpm = ShaftRpmFromErpm(parsed.values.erpm, pole_pairs_);
       telemetry_.fault_code = parsed.values.fault_code;
       // The VESC tachometer is already a signed cumulative count.
       telemetry_.signed_ticks = parsed.values.tacho;
