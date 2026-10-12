@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {apiErrorMessage, errorMessage} from "./errors.ts";
+import {apiErrorMessage, errorMessage, isAbortError} from "./errors.ts";
 
 describe("errorMessage", () => {
     it("reads an Error", () => {
@@ -25,5 +25,18 @@ describe("apiErrorMessage", () => {
         expect(apiErrorMessage(undefined)).toBeUndefined();
         expect(apiErrorMessage(null)).toBeUndefined();
         expect(apiErrorMessage({})).toBeUndefined();
+    });
+});
+
+describe("isAbortError", () => {
+    it("recognises an aborted request", () => {
+        expect(isAbortError(new DOMException("aborted", "AbortError"))).toBe(true);
+        expect(isAbortError({name: "AbortError"})).toBe(true);
+    });
+
+    it("is false for anything else", () => {
+        expect(isAbortError(new Error("boom"))).toBe(false);
+        expect(isAbortError(undefined)).toBe(false);
+        expect(isAbortError("AbortError")).toBe(false);
     });
 });

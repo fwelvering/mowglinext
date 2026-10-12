@@ -17,3 +17,7 @@ export const errorMessage = (thrown: unknown): string => {
 /** The `error` text the GUI backend puts in an API error body (`{ error: "..." }`). */
 export const apiErrorMessage = (apiError: unknown): string | undefined =>
     (apiError as { error?: string } | null | undefined)?.error;
+
+/** True for the rejection of an aborted fetch / AbortController (`name === "AbortError"`). */
+export const isAbortError = (thrown: unknown): boolean =>
+    typeof thrown === "object" && thrown !== null && (thrown as { name?: unknown }).name === "AbortError";
