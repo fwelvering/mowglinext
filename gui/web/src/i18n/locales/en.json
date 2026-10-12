@@ -833,6 +833,8 @@
     "lidarNoEstimate": "No estimate yet"
   },
   "mowgliNextPage": {
+    "mowerOnDockTop": "Mower on its dock — top view",
+    "mowerTop": "Mower — top view",
     "headlineUntilHomePrefix": "Just ",
     "headlineMinutes": "{{value}} min",
     "headlineUntilHomeSuffix": " until home.",

@@ -833,6 +833,8 @@
     "lidarNoEstimate": "Pas encore d’estimation"
   },
   "mowgliNextPage": {
+    "mowerOnDockTop": "Tondeuse sur sa station — vue de dessus",
+    "mowerTop": "Tondeuse — vue de dessus",
     "headlineUntilHomePrefix": "Encore ",
     "headlineMinutes": "{{value}} min",
     "headlineUntilHomeSuffix": " avant la maison.",
