@@ -2426,6 +2426,10 @@
       "label": "Sabo MOWiT 500F",
       "description": "Grande tondeuse professionnelle (775x535 mm), largeur de coupe de 32 cm."
     },
+    "Worx500MPlus": {
+      "label": "WORX 500M Plus",
+      "description": "Configuration fournie de 580×395 mm ; centre de lame décalé de 57,5 mm à droite. Vérifier la position de la roulette et l’étalonnage des composants."
+    },
     "CUSTOM": {
       "label": "Robot personnalisé",
       "description": "Configurer manuellement tous les paramètres matériels pour une construction personnalisée."

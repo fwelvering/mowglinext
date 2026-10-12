@@ -2430,6 +2430,10 @@
       "label": "Sabo MOWiT 500F",
       "description": "Large professional mower (775x535mm), 32cm cutting width."
     },
+    "Worx500MPlus": {
+      "label": "WORX 500M Plus",
+      "description": "Contributor-configured 580×395 mm mower; blade centre 57.5 mm right of centre. Review caster position and component calibration."
+    },
     "CUSTOM": {
       "label": "Custom Robot",
       "description": "Manually configure all hardware parameters for a custom build."
