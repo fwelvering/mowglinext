@@ -152,6 +152,31 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
   return loc;
 }
 
+FirstDrive resolveFirstDrive(const std::vector<nav_msgs::msg::Path>& units,
+                             const std::set<std::size_t>& done,
+                             bool cursor_valid,
+                             std::size_t cursor,
+                             std::size_t total_poses)
+{
+  FirstDrive first;
+  const std::size_t unit = nextUndoneUnit(0, units.size(), done);
+  if (unit >= units.size())
+  {
+    return first;
+  }
+  first.valid = true;
+  first.unit = unit;
+  if (cursor_valid)
+  {
+    const ResumeLocation rl = resolveResumeLocation(units, cursor, total_poses);
+    if (rl.valid && rl.unit == unit)
+    {
+      first.local = rl.local;
+    }
+  }
+  return first;
+}
+
 void refreshSwathProgress(BTContext& ctx, uint32_t area_idx, std::size_t unit_count)
 {
   // Denominator = drivable units in the plan; numerator = units recorded mowed
@@ -418,10 +443,7 @@ BT::NodeStatus FollowStrip::onStart()
   swath_idx_ = 0;
   {
     const auto& done = ctx->area_completed_swaths[area_idx_];
-    while (swath_idx_ < swaths_.size() && done.count(swath_idx_) > 0)
-    {
-      ++swath_idx_;
-    }
+    swath_idx_ = nextUndoneUnit(swath_idx_, swaths_.size(), done);
     if (swath_idx_ >= swaths_.size())
     {
       // Every swath already mowed this session — nothing left for this area.
@@ -1122,10 +1144,7 @@ BT::NodeStatus FollowStrip::onRunning()
     truncated_at_.reset();
     // Skip any swaths already mowed in an earlier pass (resume).
     const auto& done = ctx->area_completed_swaths[area_idx_];
-    while (swath_idx_ < swaths_.size() && done.count(swath_idx_) > 0)
-    {
-      ++swath_idx_;
-    }
+    swath_idx_ = nextUndoneUnit(swath_idx_, swaths_.size(), done);
     // Refresh the GUI's live swath progress on every boundary (the swath that
     // just completed was inserted into area_completed_swaths before advance()
     // ran), so completed_swaths climbs during the pass rather than only at its
@@ -3734,20 +3753,42 @@ BT::NodeStatus PlanCoverageArea::onRunning()
       // fresh from pose 0 and the transit must stay at pose 0 too.
       const bool fingerprint_ok =
           fpit == ctx->area_plan_fingerprint.end() || fpit->second == hashPlanGeometry(units);
-      if (cit != ctx->area_resume_pose_index.end() && fingerprint_ok)
+      // The units FollowStrip will skip: only those recorded as mowed, and only when that record
+      // still matches this plan. Read with find(), never operator[]: inserting an empty entry here
+      // would make FollowStrip's staleness guard believe there is persisted state.
+      static const std::set<std::size_t> kNoUnitsDone;
+      const auto dit = ctx->area_completed_swaths.find(area_idx);
+      const std::set<std::size_t>& done =
+          (fingerprint_ok && dit != ctx->area_completed_swaths.end()) ? dit->second : kNoUnitsDone;
+      const bool has_cursor = cit != ctx->area_resume_pose_index.end() && fingerprint_ok;
+      // FollowStrip drives the FIRST unit not recorded as mowed (headland rings before the
+      // interior; a unit left over after a failed transit is driven again) and trims only the unit
+      // the cursor lands in. The first transit must aim where that first goal is driven: aiming at
+      // the cursor's unit while an earlier one is still open sent the robot to unit 7 and straight
+      // back to unit 1 (field 2026-10-12).
+      const FirstDrive first =
+          resolveFirstDrive(units, done, has_cursor, has_cursor ? cit->second : 0, total);
+      if (first.valid)
       {
-        const ResumeLocation rl = resolveResumeLocation(units, cit->second, total);
-        if (rl.valid)
+        transit_goal = units[first.unit].poses[first.local];
+        if (first.local > 0)
         {
-          transit_goal = units[rl.unit].poses[rl.local];
           RCLCPP_INFO(ctx->node->get_logger(),
                       "PlanCoverageArea: resume cursor %zu/%zu → transit straight to the resume "
                       "point (sub-path %zu/%zu, local pose %zu) — no redundant strip-start hop",
                       cit->second,
                       total,
-                      rl.unit + 1,
+                      first.unit + 1,
                       units.size(),
-                      rl.local);
+                      first.local);
+        }
+        else if (first.unit > 0)
+        {
+          RCLCPP_INFO(ctx->node->get_logger(),
+                      "PlanCoverageArea: first unit still to mow is sub-path %zu/%zu — transit to "
+                      "its start (earlier units are recorded mowed)",
+                      first.unit + 1,
+                      units.size());
         }
       }
     }

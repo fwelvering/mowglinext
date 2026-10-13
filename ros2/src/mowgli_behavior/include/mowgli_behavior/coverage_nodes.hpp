@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -155,6 +156,26 @@ struct ResumeLocation
 ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& units,
                                      std::size_t cursor,
                                      std::size_t total_poses);
+
+/// Where FollowStrip drives FIRST: `unit` is the first unit not recorded in `done` (see
+/// nextUndoneUnit); `local` is the resume offset when the persisted cursor lands in that very unit,
+/// 0 (its front) otherwise. A cursor that lands in a LATER unit is trimmed when that unit is
+/// reached, not before: the earlier incomplete units are driven first. `valid` is false when every
+/// unit is already done.
+struct FirstDrive
+{
+  bool valid = false;
+  std::size_t unit = 0;
+  std::size_t local = 0;
+};
+
+/// The single mapping behind both FollowStrip's first unit and PlanCoverageArea's first transit
+/// goal. `cursor_valid` is false when the persisted cursor must be ignored (stale plan).
+FirstDrive resolveFirstDrive(const std::vector<nav_msgs::msg::Path>& units,
+                             const std::set<std::size_t>& done,
+                             bool cursor_valid,
+                             std::size_t cursor,
+                             std::size_t total_poses);
 
 // ---------------------------------------------------------------------------
 // refreshSwathProgress — publish the GUI-facing live swath progress for the
