@@ -31,11 +31,12 @@ import {
     translateDriveTuningTrialPhase,
     translateDriveTuningTrialQuality,
 } from "../../utils/driveTuningI18n.ts";
+import type {SettingsValues} from "../../types/settings.generated";
 
 const { Text, Paragraph } = Typography;
 
 type Props = {
-    values: Record<string, any>;
+    values: SettingsValues;
     onChange: (key: string, value: any) => void;
     acceptPersistedValues?: (values: Record<string, any>) => void;
 };
@@ -236,7 +237,7 @@ export const DriveMotorSection: React.FC<Props> = ({ values, onChange, acceptPer
         try {
             await loadLatestReport();
             setReportOpen(true);
-        } catch (e: any) {
+        } catch (e) {
             notification.error({
                 message: t("settingsDriveMotor.notifications.loadReportFailed.title"),
                 description: formatBackendError(e),
@@ -340,7 +341,7 @@ export const DriveMotorSection: React.FC<Props> = ({ values, onChange, acceptPer
                         message: translateBackendMessage(response?.message)
                             ?? t("settingsDriveMotor.notifications.rollbackCompleted.title"),
                     });
-                } catch (e: any) {
+                } catch (e) {
                     notification.error({
                         message: t("settingsDriveMotor.notifications.rollbackFailed.title"),
                         description: formatBackendError(e),

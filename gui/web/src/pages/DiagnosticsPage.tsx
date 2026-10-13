@@ -89,6 +89,8 @@ import {deriveLidarAnchor} from "../utils/lidarAnchor.ts";
 import {useValueSince} from "../hooks/useValueSince.ts";
 import {SystemPowerCard} from "../components/SystemPowerCard.tsx";
 import "./DiagnosticsPage.css";
+import {apiErrorMessage, errorMessage, isAbortError} from "../utils/errors";
+import {voidify} from "../utils/promises";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -223,7 +225,7 @@ export const DiagnosticsPage = () => {
     const imu = useImu(sensorsPanelOpen);
     const {settings} = useSettings();
     const guiApi = useApi();
-    const wheelRpm = useWheelRpm({wheelRadiusM: settings?.wheel_radius ?? 0.04475});
+    const wheelRpm = useWheelRpm({wheelRadiusM: (settings?.wheel_radius as number | undefined) ?? 0.04475});
     const {stats: fusionStats} = useFusionGraphDiagnostics();
     const rosbag = useRosbag(true);
 
@@ -501,12 +503,12 @@ export const DiagnosticsPage = () => {
                 format: "json",
                 body: {enabled: checked},
             });
-        } catch (e: any) {
+        } catch (e) {
             setFirmwareDebugTarget(null);
             setFirmwareDebugLoading(false);
             notification.error({
                 message: t("diagnosticsPage.firmwareDebugToggleFailed"),
-                description: e?.message ?? t("diagnosticsPage.unknownError"),
+                description: errorMessage(e) ?? t("diagnosticsPage.unknownError"),
             });
         }
     };
@@ -524,7 +526,7 @@ export const DiagnosticsPage = () => {
                         <Button
                             size="small"
                             icon={<ReloadOutlined spin={loading}/>}
-                            onClick={refresh}
+                            onClick={voidify(refresh)}
                         >
                             {t('diagnosticsPage.refresh')}
                         </Button>
@@ -582,7 +584,7 @@ export const DiagnosticsPage = () => {
                                 size="small"
                                 checked={firmwareDebugEnabled}
                                 loading={firmwareDebugLoading}
-                                onChange={toggleFirmwareDebug}
+                                onChange={voidify(toggleFirmwareDebug)}
                             />
                             <SettingOutlined style={{color: colors.textMuted, fontSize: 14}} />
                         </Space>
@@ -745,16 +747,16 @@ export const DiagnosticsPage = () => {
         try {
             const r = await rosbag.start();
             notification.success({message: t('diagnosticsPage.rosbagStarted'), description: r?.name});
-        } catch (e: any) {
-            notification.error({message: t('diagnosticsPage.rosbagStartFailed'), description: e.message});
+        } catch (e) {
+            notification.error({message: t('diagnosticsPage.rosbagStartFailed'), description: errorMessage(e)});
         }
     };
     const handleRosbagStop = async () => {
         try {
             const r = await rosbag.stop();
             notification.success({message: t('diagnosticsPage.rosbagStopped'), description: r?.stopped_name});
-        } catch (e: any) {
-            notification.error({message: t('diagnosticsPage.rosbagStopFailed'), description: e.message});
+        } catch (e) {
+            notification.error({message: t('diagnosticsPage.rosbagStopFailed'), description: errorMessage(e)});
         }
     };
     const confirmRosbagDelete = (name: string) => {
@@ -768,8 +770,8 @@ export const DiagnosticsPage = () => {
                 try {
                     await rosbag.remove(name);
                     notification.success({message: t('diagnosticsPage.rosbagDeleted'), description: name});
-                } catch (e: any) {
-                    notification.error({message: t('diagnosticsPage.rosbagDeleteFailed'), description: e.message});
+                } catch (e) {
+                    notification.error({message: t('diagnosticsPage.rosbagDeleteFailed'), description: errorMessage(e)});
                 }
             },
         });
@@ -800,7 +802,7 @@ export const DiagnosticsPage = () => {
                                 size="small"
                                 type="primary"
                                 icon={<PlayCircleOutlined/>}
-                                onClick={handleRosbagStart}
+                                onClick={voidify(handleRosbagStart)}
                                 loading={rosbag.busy === "start"}
                                 disabled={rosbagActive || rosbag.busy !== null}
                             >
@@ -810,7 +812,7 @@ export const DiagnosticsPage = () => {
                                 size="small"
                                 danger
                                 icon={<StopOutlined/>}
-                                onClick={handleRosbagStop}
+                                onClick={voidify(handleRosbagStop)}
                                 loading={rosbag.busy === "stop"}
                                 disabled={!rosbagActive || rosbag.busy !== null}
                             >
@@ -908,13 +910,13 @@ export const DiagnosticsPage = () => {
         setFusionBusy(command);
         try {
             const res = await guiApi.mowglinext.callCreate(command, {});
-            if (res.error) throw new Error((res.error as any)?.error ?? "service call failed");
+            if (res.error) throw new Error(apiErrorMessage(res.error) ?? "service call failed");
             notification.success({
                 message: t(FUSION_SUCCESS_KEY[command]),
-                description: (res.data as any)?.message,
+                description: (res.data as { message?: string } | undefined)?.message,
             });
-        } catch (e: any) {
-            notification.error({message: t('diagnosticsPage.fusionGraphActionFailed'), description: e.message});
+        } catch (e) {
+            notification.error({message: t('diagnosticsPage.fusionGraphActionFailed'), description: errorMessage(e)});
         } finally {
             setFusionBusy(null);
         }
@@ -1008,7 +1010,7 @@ export const DiagnosticsPage = () => {
                         <Space>
                             <Button
                                 size="small"
-                                onClick={() => callFusionService("fusion_graph_save")}
+                                onClick={() => { void callFusionService("fusion_graph_save"); }}
                                 loading={fusionBusy === "fusion_graph_save"}
                                 disabled={fusionBusy !== null}
                             >
@@ -1519,7 +1521,7 @@ export const DiagnosticsPage = () => {
             okButtonProps: {danger: true},
             onOk: async () => {
                 await startImuCalibration();
-                refreshCalibration();
+                void refreshCalibration();
             },
         });
     };
@@ -1546,17 +1548,17 @@ export const DiagnosticsPage = () => {
                     if (!res.ok) {
                         throw new Error(`HTTP ${res.status}: ${await res.text()}`);
                     }
-                    const data = await res.json();
+                    const data = (await res.json()) as { success?: boolean; message?: string };
                     if (data.success) {
                         notification.success({message: t('diagnosticsPage.magCalibrationComplete'), description: data.message || t('diagnosticsPage.refreshingStatus')});
                     } else {
                         notification.error({message: t('diagnosticsPage.magCalibrationFailed'), description: data.message || t('diagnosticsPage.unknownError')});
                     }
-                    refreshCalibration();
-                } catch (e: any) {
+                    void refreshCalibration();
+                } catch (e) {
                     notification.error({
                         message: t('diagnosticsPage.magCalibrationFailed'),
-                        description: e?.name === "AbortError"
+                        description: isAbortError(e)
                             ? t('diagnosticsPage.calibrationTimedOut')
                             : (e instanceof Error ? e.message : String(e)),
                     });
