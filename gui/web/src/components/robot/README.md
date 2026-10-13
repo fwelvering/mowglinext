@@ -4,7 +4,7 @@ The shared renderer is used by Hardware, Sensors and the map's URDF appearance.
 It is a scaled illustration, not CAD or collision geometry.
 
 - Configure the shell once in Hardware. Sensors and Map inherit the selection.
-- Six shells: Rounded, Sculpted, Utility, Yardforce-inspired, RM1000-inspired, Worx-inspired.
+- Shell choices come from the registry: Rounded, Sculpted, Utility, Yardforce-inspired, RM1000-inspired, Worx-inspired and Tron-inspired.
 - Shell style is saved in mower configuration; Hardware transparency stays browser-local.
 - Sensors starts transparent each time it opens; its toggle affects only that
   editor session (both top and side). The map always remains opaque.
@@ -516,6 +516,24 @@ normal reload. Use the helper for full-size sources, SVG masks and compact map
 assets alike. Pose changes do not alter the URL. Rebuild/deploy the web bundle
 when replacing artwork; copying a changed image under an old build ID is insufficient.
 
+
+### Airseekers Tron-inspired shell
+
+The `tron` registry entry pairs with the standard dock (`styled` appearance ID).
+Top and left-side projections share `tron.png`; the silver upper cover alone is
+paintable through `tron-top-paint.svg` and `tron-side-paint.svg`. The graphite
+exoskeleton, lower deck and bumper remain neutral. The native SVG width/height
+must match the full atlas canvas, as well as its viewBox: cropped canvas drawing
+uses native image coordinates. A viewBox without dimensions can load successfully
+but paint nothing. Browser regression samples verify a visible tint in both
+views at full and compact map resolution.
+
+The rear wheel draws over the open side frame. Wheel/caster sizes and positions,
+sensors and chassis bounds still come from the configured robot geometry. This
+is a shell addition, not a Tron hardware preset or omni-wheel drivetrain model.
+The colour gallery hides independent components to make the paint boundary clear;
+Hardware/Sensors screenshots retain the normal independently rendered components.
+Provenance, generation specification and screenshots: `docs/pr/tron-shell/README.md`.
 
 ## Cross-browser artwork coordinates
 

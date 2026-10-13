@@ -588,6 +588,7 @@ TEST(SharpRingCorner, AnAcuteTipIsReachedAndPivotedInsteadOfRounded)
                                        false,
                                        0,
                                        std::nullopt,
+                                       0.0,
                                        &limits);
   ASSERT_FALSE(rounded.rings.empty());
   ASSERT_FALSE(sharp.rings.empty());
@@ -638,6 +639,7 @@ TEST(SharpRingCorner, DisabledLimitsKeepTheArc)
                                                false,
                                                0,
                                                std::nullopt,
+                                               0.0,
                                                &disabled);
   EXPECT_EQ(without.rings, with_disabled.rings)
       << "an uninjected server must plan exactly as before";
@@ -671,6 +673,7 @@ TEST(SharpRingCorner, GentleCornersKeepTheirArc)
                                              false,
                                              0,
                                              std::nullopt,
+                                             0.0,
                                              &limits);
   EXPECT_EQ(rounded.rings, with_limits.rings)
       << "a corner that is not sharper than the pivot threshold keeps its fillet";

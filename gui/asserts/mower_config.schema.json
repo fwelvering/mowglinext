@@ -26,7 +26,7 @@
           "type": "string",
           "title": "Body Style",
           "$comment": "enum generated from web/src/components/robot/appearanceRegistry.ts by npm run generate:appearances",
-          "enum": ["","rounded","sculpted","utility","yardforce","rm1000","worx"],
+          "enum": ["","tron","rounded","sculpted","utility","yardforce","rm1000","worx"],
           "default": "",
           "description": "Shared shell and matching dock illustration. Empty follows the mower model. Display only; does not change robot geometry."
         },

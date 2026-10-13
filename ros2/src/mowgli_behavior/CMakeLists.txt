@@ -126,6 +126,15 @@ if(BUILD_TESTING)
   # colcon tests packages in parallel, and on one shared DDS domain the test
   # processes discover each other's nodes (docs/claude/testing-ci.md).
   find_package(ament_cmake_ros REQUIRED)
+  find_package(launch_testing_ament_cmake REQUIRED)
+
+  # Restart the real behavior process at a completed-subpath checkpoint.
+  add_launch_test(test/test_coverage_restart.launch.py
+    TARGET test_coverage_restart
+    TIMEOUT 90
+    RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py"
+    ENV "MOWGLI_BEHAVIOR_EXECUTABLE=$<TARGET_FILE:behavior_tree_node>"
+  )
   find_package(tinyxml2 REQUIRED)
   # Exclude uncrustify — we use clang-format (see .clang-format)
   set(ament_cmake_uncrustify_FOUND TRUE)

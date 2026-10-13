@@ -691,15 +691,25 @@ void FollowStrip::persistResumeCursor(const std::shared_ptr<BTContext>& ctx)
                                       : 0;
   const std::size_t absolute = base + trim_offset + path_progress_idx_;
   recordInterruptedCoverageProgress(*ctx, area_idx_, absolute, total_path_poses_);
+  // Report a saved cursor only after the atomic checkpoint write succeeds.
+  // Failed writes are reported by the persistence layer; live progress remains
+  // available for an in-process resume even when disk persistence fails.
+  if (!saveCoverageResumeState(*ctx))
+  {
+    RCLCPP_WARN(ctx->node->get_logger(),
+                "FollowStrip: area %u interrupted at pose %zu/%zu; resume cursor retained in "
+                "memory only",
+                area_idx_,
+                absolute,
+                total_path_poses_);
+    return;
+  }
   RCLCPP_INFO(ctx->node->get_logger(),
               "FollowStrip: area %u interrupted at pose %zu/%zu (%.0f%%) — resume cursor saved",
               area_idx_,
               absolute,
               total_path_poses_,
               static_cast<double>(ctx->coverage_percent));
-  // Persist to disk so the resume survives a full process/container restart,
-  // not just the in-RAM BT halt (the whole point of issue #334).
-  saveCoverageResumeState(*ctx);
 }
 
 bool FollowStrip::sendFollowGoal(const std::shared_ptr<BTContext>& ctx)
@@ -1277,29 +1287,27 @@ BT::NodeStatus FollowStrip::onRunning()
     return advance();
   }
 
-  // TransitToStrip could not reach this unit's start (sendCurrentSwath): move
-  // on without repeating that transit. Not booked as mowed.
-  if (unit_transit_already_failed_)
+  // TransitToStrip could not reach this unit's start (sendCurrentSwath), or
+  // this transit target already failed on an earlier dispatch of this area,
+  // this session (issue #732): do not repeat that transit. Resume the unit past
+  // the blocked start instead of dropping all of it (issue #607 — field
+  // 2026-10-10, pass 2: the rings unit started at a known-failed target beside
+  // the dock and its remaining 3565 poses were skipped here).
+  if (unit_transit_already_failed_ || unit_transit_known_failed_)
   {
+    const bool known_failed = unit_transit_known_failed_;
     unit_transit_already_failed_ = false;
-    RCLCPP_WARN(ctx->node->get_logger(),
-                "FollowStrip: segment %zu/%zu — TransitToStrip could not reach its start; not "
-                "repeating that transit, moving on (it stays un-mowed for a later pass)",
-                swath_idx_ + 1,
-                swaths_.size());
-    ++swaths_skipped_;
-    return advance();
-  }
-  // issue #732: this transit target already failed on an earlier dispatch of
-  // this area, this session — not repeating it.
-  if (unit_transit_known_failed_)
-  {
     unit_transit_known_failed_ = false;
     RCLCPP_WARN(ctx->node->get_logger(),
-                "FollowStrip: segment %zu/%zu — this transit already failed earlier this "
-                "session; not repeating it, moving on (it stays un-mowed for a later pass)",
+                "FollowStrip: segment %zu/%zu — %s; not repeating that transit",
                 swath_idx_ + 1,
-                swaths_.size());
+                swaths_.size(),
+                known_failed ? "this transit already failed earlier this session"
+                             : "TransitToStrip could not reach its start");
+    if (resumeUnitPastBlockedStretch(ctx))
+    {
+      return BT::NodeStatus::RUNNING;
+    }
     ++swaths_skipped_;
     return advance();
   }
@@ -1519,11 +1527,14 @@ BT::NodeStatus FollowStrip::onRunning()
                                   {prior_stuck_point.x, prior_stuck_point.y});
         }
       }
-      // issue #607: the detour budget is spent and its last resume transit
-      // failed. Skip only the blocked stretch, not the rest of the unit — a
-      // unit can carry every headland ring of the lawn (field 2026-10-10: a
-      // 4 m hairpin against a hedge dropped 382 m of a 1016 m plan here).
-      if (!start_pose_blocked && had_detour_in_flight && resumeUnitPastBlockedStretch(ctx))
+      // issue #607: a transit into this unit failed and no detour is left to
+      // try. Skip only the blocked stretch, not the rest of the unit — a unit
+      // can carry every headland ring of the lawn (field 2026-10-10: a 4 m
+      // hairpin against a hedge dropped 382 m of a 1016 m plan here). This
+      // holds for EVERY transit into the unit, not only a detour's: later the
+      // same day a non-obstacle abort's resume transit (0.7 m, refused by RPP
+      // beside the hedge) still dropped the remaining 5296 poses of the rings.
+      if (!start_pose_blocked && resumeUnitPastBlockedStretch(ctx))
       {
         return BT::NodeStatus::RUNNING;
       }
@@ -1760,7 +1771,7 @@ BT::NodeStatus FollowStrip::yieldToFleet(const std::shared_ptr<BTContext>& ctx, 
   ctx->fleet_yielded_areas.insert(area_idx_);
   RCLCPP_INFO(ctx->node->get_logger(),
               "FollowStrip: area %u is assigned to another fleet member — yielding %s "
-              "(resume cursor saved; this pass is not charged to the no-progress budget)",
+              "(this pass is not charged to the no-progress budget)",
               area_idx_,
               mid_pass ? "mid-pass" : "before starting");
   // SUCCESS = "this pass is over", exactly like a pass that mowed what it
@@ -2325,9 +2336,9 @@ bool FollowStrip::resumeUnitPastBlockedStretch(const std::shared_ptr<BTContext>&
   skipped_tally_.addDetour(resume_idx, gap_m);
   const geometry_msgs::msg::Point blocked_target = poses.front().pose.position;
   RCLCPP_WARN(ctx->node->get_logger(),
-              "FollowStrip: unit %zu/%zu — detours exhausted on this stretch; skipping %zu poses / "
-              "%.2f m past it and resuming the rest of the unit (%zu poses, no-progress resumes: "
-              "%zu)",
+              "FollowStrip: unit %zu/%zu — its start is blocked; skipping %zu poses / %.2f m past "
+              "the blocked stretch and resuming the rest of the unit (%zu poses, no-progress "
+              "resumes: %zu)",
               swath_idx_ + 1,
               swaths_.size(),
               resume_idx,
