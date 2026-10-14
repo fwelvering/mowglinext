@@ -106,7 +106,7 @@
 | `test_coverage_persistence.cpp` | 552 | 22 tests: round-trip (incl. `area_ids`, mowglinext#637 phase 2), header/version, malformed rows, `current_command` restore |
 | `test_gnss_status_authority.cpp` | 56 | 2 tests: `mowgli_interfaces::gnss_status_utils` fix-type mapping the BT relies on |
 | `test_coverage_transit_gap.cpp` | 50 | Transit threshold wiring plus mandatory blade-off transit at every later sub-path boundary |
-| `test_coverage_resume_location.cpp` | 192 | 11 tests: `resolveResumeLocation` shared by `FollowStrip` and `PlanCoverageArea` |
+| `test_coverage_resume_location.cpp` | 250 | 16 tests: `resolveResumeLocation` and `resolveFirstDrive` (the first unit a pass drives = the first unit not recorded mowed, `nextUndoneUnit` in `unit_resume.hpp`; the cursor's unit is trimmed only when reached) shared by `FollowStrip` and `PlanCoverageArea`'s first transit goal |
 | `test_swath_progress.cpp` | 153 | 7 tests: `refreshSwathProgress` / `coveragePercentFromCursor` climb during a pass |
 | `test_detour_resume.cpp` | 365 | 15 tests: `footprintClear`, `decideDetour` |
 | `test_dig_skip.cpp` | ~290 | 18 tests: `dig_skip.hpp` (zones, dedup/bound of dig points, drivable runs incl. adjacent swaths / short runs / sparse legacy paths, settle wait) |

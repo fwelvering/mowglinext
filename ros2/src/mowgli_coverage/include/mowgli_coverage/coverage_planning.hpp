@@ -37,6 +37,20 @@
 namespace mowgli_coverage
 {
 
+// Optional exact geometry snapshots for offline replay. No clocks, formatting,
+// quantization or decision logic: an absent trace allocates no snapshot storage.
+// Stages retain cell/ring/point order so a replay can locate the first divergence.
+struct PlanningTrace
+{
+  struct Stage
+  {
+    std::string name;
+    std::vector<std::vector<std::pair<double, double>>> paths;
+    std::vector<double> angles = {};
+  };
+  std::vector<Stage> stages;
+};
+
 // Visibility into what planBoustrophedon dropped and how much of the polygon
 // it ended up planning. Coverage gaps were previously silent (slivers, tiny
 // rings, micro-cells, and whole-area F2C failures all just vanished from the
@@ -245,6 +259,8 @@ struct BoustrophedonPlan
 // the boundary — plus swath_turn_envelope, a tighter ring-bound
 // connector_max_headland_passes caps for mainland swath U-turns only (see the
 // BoustrophedonPlan field docs).
+struct PivotJoinLimits;  // defined below, with the pivot helpers
+
 // Deterministic Auto heading; degenerate clips never define an angle.
 std::optional<double> longestValidSwathAngle(const f2c::types::Swaths& swaths);
 
@@ -261,6 +277,17 @@ std::optional<double> longestValidSwathAngle(const f2c::types::Swaths& swaths);
 //                pickRingClosure), and plan.rings[0] is guaranteed to be the
 //                outer perimeter, so the route starts there. Ignored with the
 //                ring stage off (no ring to start on).
+//   corner_pivot_limits — optional (default: none, which is bit-for-bit the
+//                historical behaviour: every ring corner sharper than 30° is
+//                rounded with a forward arc). With pivots enabled
+//                (sweep_radius > 0) a ring corner sharper than 60° where the
+//                pivot sweep fits (pivotSweepFits) is NOT rounded: it stays a
+//                sharp vertex, so the ring reaches the very corner, and
+//                buildContinuousSubPaths turns it into an in-place pivot corner
+//                (pivotSharpCorners). A fillet cuts the corner off and leaves
+//                the tip uncut. Corners where the sweep does not fit (beside a
+//                drawn obstacle, too far past the recorded line) and corners
+//                between 30° and 60° keep today's arc.
 BoustrophedonPlan planBoustrophedon(
     const f2c::types::Cell& field_cell,
     double op_width,
@@ -274,7 +301,9 @@ BoustrophedonPlan planBoustrophedon(
     bool perpendicular = false,
     int connector_max_headland_passes = 0,
     const std::optional<std::pair<double, double>>& start_hint = std::nullopt,
-    double min_boundary_feature_width = 0.0);
+    double min_boundary_feature_width = 0.0,
+    const PivotJoinLimits* corner_pivot_limits = nullptr,
+    PlanningTrace* trace = nullptr);
 
 // Where a closed headland ring starts and ends — the ring's "closure". `open_loop`
 // is the ring's corner vertices WITHOUT the repeated closing vertex (>= 3).
@@ -580,7 +609,8 @@ std::vector<std::vector<std::pair<double, double>>> buildContinuousSubPaths(
     ConnectorStats* stats = nullptr,
     const std::vector<std::pair<double, double>>& swath_turn_boundary = {},
     const PivotJoinLimits& pivot_limits = {},
-    bool pin_first_subpath = false);
+    bool pin_first_subpath = false,
+    PlanningTrace* trace = nullptr);
 
 // Reorders a set of FINISHED, hole-free sub-path polylines (as produced by
 // buildContinuousSubPaths above, which calls this internally) to minimize the

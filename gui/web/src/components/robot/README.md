@@ -114,7 +114,8 @@ The value is editable in Hardware Ã¢â€ â€™ Chassis & Geometry, mirror
 and passed through launch to both URDF body visual/collision origins. It does
 not move base_link, wheels, casters, blade or sensor frames and does not change
 the 2D navigation footprint. Other populated mower presets explicitly retain
-zero offset; custom/sparse configurations inherit the template unless overridden.
+zero offset. A missing chassis offset inherits the selected preset on upgrade;
+explicit saved values still win. CUSTOM/unknown models use the generic template.
 
 The live map uses the running URDF. Hardware/Sensors previews show edited values;
 save and restart ROS before the running model reflects a changed offset.
@@ -552,3 +553,14 @@ that filter. The shared renderer also covers blade, wheel and dock artwork.
 The opt-in `playwright.robot-artwork.config.ts` suite checks actual raster centres
 against independently rendered sensor position markers, not just DOM transforms.
 See the end-to-end test README for commands and the browser coverage limits.
+
+
+### Preset geometry upgrade defaults
+
+Preset numbers are authored only in `src/constants/mowerModels.ts`.
+`npm run generate:model-geometry` emits matching GUI/ROS assets for the explicit
+upgrade-key allowlist in `scripts/model-geometry-defaults.mjs` (currently only
+`chassis_z_offset`). The Go asset parity test (`go test ./...` in GUI CI) rejects stale copies. The loader
+applies these before installed values, and the GUI uses them for reads, reset and
+sparse-save pruning; zero is a valid explicit override. Do not add model-name or
+offset branches to those consumers. Other calibrated preset fields are not reapplied.
