@@ -52,7 +52,9 @@ export const MOWER_MODELS: MowerModel[] = [
             blade_x_offset: 0.0, blade_y_offset: 0.0, blade_radius: 0.09, tool_width: 0.18, ticks_per_meter: 300,
             battery_full_voltage: 28.5, battery_empty_voltage: 24.0,
             battery_critical_voltage: 23.0,
-            gps_x: 0.3, gps_y: 0.0, gps_z: 0.2,
+            // gps_z centres the 0.02 m URDF antenna puck on the shell top:
+            // chassis_z_offset + chassis_height + 0.01 = -0.05 + 0.19 + 0.01.
+            gps_x: 0.3, gps_y: 0.0, gps_z: 0.15,
             imu_x: 0.187, imu_y: -0.195, imu_z: 0.0, imu_yaw: 0.0,
             lidar_x: 0.0, lidar_y: 0.025, lidar_z: 0.3, lidar_yaw: -3.1416,
             chassis_length: 0.60, chassis_width: 0.45, chassis_center_x: 0.18,
@@ -70,7 +72,9 @@ export const MOWER_MODELS: MowerModel[] = [
             blade_x_offset: 0.0, blade_y_offset: 0.0, blade_radius: 0.09, tool_width: 0.18, ticks_per_meter: 300,
             battery_full_voltage: 28.5, battery_empty_voltage: 24.0,
             battery_critical_voltage: 23.0,
-            gps_x: 0.3, gps_y: 0.0, gps_z: 0.2,
+            // gps_z centres the 0.02 m URDF antenna puck on the shell top:
+            // chassis_z_offset + chassis_height + 0.01 = -0.05 + 0.19 + 0.01.
+            gps_x: 0.3, gps_y: 0.0, gps_z: 0.15,
             imu_x: 0.187, imu_y: -0.195, imu_z: 0.0, imu_yaw: 0.0,
             lidar_x: 0.0, lidar_y: 0.025, lidar_z: 0.3, lidar_yaw: -3.1416,
             chassis_length: 0.60, chassis_width: 0.45, chassis_center_x: 0.18,

@@ -1749,31 +1749,51 @@ BT::NodeStatus FollowStrip::onRunning()
 void FollowStrip::onHalted()
 {
   auto ctx = config().blackboard->get<std::shared_ptr<BTContext>>("context");
+
   // Preempt (recharge, e-stop, command change) mid-path: capture how far we got
   // and persist the resume cursor so the next dispatch continues from here
   // rather than re-mowing the whole area from the start.
-  if ((follow_handle_ || follow_future_.valid()) && total_path_poses_ > 0)
+  if ((follow_handle_ || follow_future_.valid() || transit_active_ || transit_pending_) &&
+      total_path_poses_ > 0 && swath_idx_ < swaths_.size())
   {
-    updateProgress(ctx);
+    // Selection is already valid while a blade-off transit or the asynchronous
+    // goal response is pending. Persist that logical cursor even without a
+    // handle; transit motion must not be counted as coverage progress.
+    if (follow_handle_ && !transit_active_ && !transit_pending_)
+    {
+      updateProgress(ctx);
+    }
+
     persistResumeCursor(ctx);
   }
+
   abortActiveGoals(ctx);
 }
 
 BT::NodeStatus FollowStrip::yieldToFleet(const std::shared_ptr<BTContext>& ctx, bool mid_pass)
 {
-  if (mid_pass && (follow_handle_ || follow_future_.valid()) && total_path_poses_ > 0)
+  if (mid_pass &&
+      (follow_handle_ || follow_future_.valid() || transit_active_ || transit_pending_) &&
+      total_path_poses_ > 0 && swath_idx_ < swaths_.size())
   {
-    updateProgress(ctx);
+    if (follow_handle_ && !transit_active_ && !transit_pending_)
+    {
+      updateProgress(ctx);
+    }
+
     persistResumeCursor(ctx);
   }
+
   abortActiveGoals(ctx);
+
   ctx->fleet_yielded_areas.insert(area_idx_);
+
   RCLCPP_INFO(ctx->node->get_logger(),
               "FollowStrip: area %u is assigned to another fleet member — yielding %s "
               "(this pass is not charged to the no-progress budget)",
               area_idx_,
               mid_pass ? "mid-pass" : "before starting");
+
   // SUCCESS = "this pass is over", exactly like a pass that mowed what it
   // could; completion is decided by completed_areas, not by this status, so
   // the AreaLoop re-enters GetNextUnmowedArea, which skips the excluded area.
@@ -1933,9 +1953,8 @@ void FollowStrip::trimUnitAt(const std::shared_ptr<BTContext>& ctx, std::size_t 
   path_progress_idx_ = 0;
   truncated_at_.reset();  // it indexed the untrimmed unit
 
-  // Persist the moved cursor now: onHalted cannot persist during the transit to
-  // the new first pose (follow_handle_ is null then), so a preempt mid-transit
-  // must still resume PAST the skipped span rather than back at the stuck pose.
+  // Persist the moved cursor now as well as on halt: a preempt or process restart
+  // during transit must resume PAST the skipped span, not at the stuck pose.
   const std::size_t base = (swath_idx_ < swath_base_.size()) ? swath_base_[swath_idx_] : 0;
   ctx->area_resume_pose_index[area_idx_] = base + swath_resume_start_indices_[swath_idx_];
   saveCoverageResumeState(*ctx);
@@ -3237,21 +3256,6 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
     return advanceAndProbe();
   }
 
-  // Assigned to another fleet member since it was last verified. Checked
-  // here, per-probe, for the same reason attempted_areas is above: the
-  // mowglinext#637 phase 2 isSkipVerified() gate means a never-probed index
-  // ALWAYS reaches this point for its first probe regardless of any
-  // pre-existing skip reason, so fleet exclusion needs its own re-check here
-  // too, exactly like attempted_areas does — the onStart/advanceAndProbe
-  // pre-filters only catch it once the cache is trusted.
-  if (ctx->fleet_excluded_areas.count(current_area_idx_) > 0)
-  {
-    RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextUnmowedArea: area %u assigned to another fleet member, skipping",
-                current_area_idx_);
-    return advanceAndProbe();
-  }
-
   // Completion is now the swath-completion model: an area is done when
   // FollowStrip has mowed every swath F2C produced for it (recorded in
   // ctx->completed_areas), its attempt budget is exhausted (attempted_areas),
@@ -3272,8 +3276,9 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   {
     areas_complete_++;
     RCLCPP_INFO(ctx->node->get_logger(),
-                "GetNextUnmowedArea: area %u already complete",
-                current_area_idx_);
+                "GetNextUnmowedArea: area %u already %s",
+                current_area_idx_,
+                skippedAreaReason(*ctx, current_area_idx_));
     return advanceAndProbe();
   }
 
