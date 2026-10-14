@@ -31,6 +31,7 @@ import {
     ThunderboltOutlined,
     ImportOutlined,
     CheckOutlined,
+    BarsOutlined,
     ExpandOutlined,
 } from "@ant-design/icons";
 import type {MenuInfo} from "rc-menu/lib/interface";
@@ -39,9 +40,6 @@ import type {Feature} from "geojson";
 import type {MenuItemType} from "antd/es/menu/interface";
 import {ShapePickerDropdown} from "./ShapePickerDropdown.tsx";
 import type {ShapeType} from "../hooks/useMapEditing.ts";
-import {getAvailableDockAppearances, MOWER_APPEARANCES, type DockAppearanceId, type MowerAppearanceId} from "../../../constants/mowerAppearances.ts";
-import {parseMowerAppearanceMenuKey} from "../../../constants/mowerAppearanceMenuKey.ts";
-import {parseDockAppearanceMenuKey} from "../../../constants/dockAppearanceMenuKey.ts";
 
 interface MowingAreaItem extends MenuItemType {
     feat: Feature;
@@ -63,6 +61,8 @@ interface MapToolbarMobileProps {
     onToggleSatellite: () => void;
     showObstacleClearance?: boolean;
     onToggleObstacleClearance?: () => void;
+    showCoveragePreview?: boolean;
+    onToggleCoveragePreview?: () => void;
     onManualMode: () => Promise<void>;
     onStopManualMode: () => Promise<void>;
     onBackupMap: () => void;
@@ -96,10 +96,6 @@ interface MapToolbarMobileProps {
     stateName?: string;
     highLevelState?: number;
     emergency?: boolean;
-    mowerAppearanceId?: MowerAppearanceId;
-    onMowerAppearanceChange?: (id: MowerAppearanceId) => void;
-    dockAppearanceId?: DockAppearanceId;
-    onDockAppearanceChange?: (id: DockAppearanceId) => void;
     onStart?: () => Promise<void>;
     onHome?: () => Promise<void>;
     onEmergencyOn?: () => Promise<void>;
@@ -118,6 +114,7 @@ export const MapToolbarMobile = ({
     historyIndex, editHistoryLength, mowingAreas,
     onEditMap, onSaveMap, onRestoreBackup, onUndo, onRedo, onToggleSatellite,
     showObstacleClearance = false, onToggleObstacleClearance,
+    showCoveragePreview = false, onToggleCoveragePreview,
     onManualMode, onStopManualMode,
     onBackupMap, onRestoreMap, onDownloadGeoJSON, onUploadGeoJSON, onImportOpenMower, onResetMowingProgress,
     onMowArea, selectedFeatureCount = 0, onEditSelectedFeature,
@@ -126,8 +123,6 @@ export const MapToolbarMobile = ({
     onDrawLidarCorridor, lidarCorridorDrawing = false, onFinishLidarCorridor, onCancelLidarCorridor,
     lidarCorridorSelected = false,
     stateName, highLevelState, emergency,
-    mowerAppearanceId = "urdf", onMowerAppearanceChange = () => {},
-    dockAppearanceId = "marker", onDockAppearanceChange = () => {},
     onStart, onHome, onEmergencyOn, onEmergencyOff,
     onAreaRecording, onContinueOrPause,
     onBladeForward, onBladeBackward, onBladeOff,
@@ -222,24 +217,14 @@ export const MapToolbarMobile = ({
                     label: showObstacleClearance ? t("mapToolbarMobile.hideObstacleClearance") : t("mapToolbarMobile.showObstacleClearance"),
                 } satisfies NonNullable<MenuProps["items"]>[number]]
                 : []),
-            {
-                key: "mowerAppearance",
-                label: t("mapToolbar.mowerAppearance"),
-                children: Object.values(MOWER_APPEARANCES).map((appearance) => ({
-                    key: `mowerAppearance:${appearance.id}`,
-                    icon: appearance.id === mowerAppearanceId ? <CheckOutlined /> : undefined,
-                    label: t(appearance.labelKey),
-                })),
-            },
-            {
-                key: "dockAppearance",
-                label: t("mapToolbar.dockAppearance"),
-                children: getAvailableDockAppearances(mowerAppearanceId).map((appearance) => ({
-                        key: `dockAppearance:${appearance.id}`,
-                        icon: appearance.id === dockAppearanceId ? <CheckOutlined /> : undefined,
-                        label: t(appearance.labelKey),
-                    })),
-            },
+            ...(onToggleCoveragePreview
+                ? [{
+                    key: "coveragePreview",
+                    icon: <BarsOutlined />,
+                    label: showCoveragePreview ? t("mapToolbarMobile.hideCoveragePreview") : t("mapToolbarMobile.showCoveragePreview"),
+                } satisfies NonNullable<MenuProps["items"]>[number]]
+                : []),
+            {key: "hardwareAppearance", label: <a href="#/settings?section=hardware">{t("mowerVisual.hardwareLink")}</a>},
         ]},
         {type: "group", label: t("mapToolbar.motionGroup"), children: [
             {key: "areaRecording", icon: <AimOutlined />, label: t("mapToolbarMobile.areaRecording")},
@@ -273,21 +258,11 @@ export const MapToolbarMobile = ({
     ];
 
     const handleMoreClick: MenuProps["onClick"] = ({key}: MenuInfo) => {
-        const appearanceId = parseMowerAppearanceMenuKey(key);
-        if (appearanceId) {
-            onMowerAppearanceChange(appearanceId);
-            return;
-        }
-        const dockAppearanceId = parseDockAppearanceMenuKey(key);
-        if (dockAppearanceId) {
-            onDockAppearanceChange(dockAppearanceId);
-            return;
-        }
-
         switch (key) {
             case "emergencyOff": safeCall(onEmergencyOff); break;
             case "satellite": onToggleSatellite(); break;
             case "obstacleClearance": onToggleObstacleClearance?.(); break;
+            case "coveragePreview": onToggleCoveragePreview?.(); break;
             case "areaRecording": safeCall(onAreaRecording); break;
             case "continueOrPause": safeCall(onContinueOrPause); break;
             case "bladeForward": safeCall(onBladeForward); break;

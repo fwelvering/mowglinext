@@ -284,6 +284,9 @@ export const enum GnssStatusConstants {
   FIX_TYPE_RTK_FLOAT = 2,
   FIX_TYPE_RTK_FIXED = 3,
   FIX_TYPE_DEAD_RECKONING = 4,
+  FIX_TYPE_2D_FIX = 5,
+  FIX_TYPE_3D_FIX = 6,
+  FIX_TYPE_DGPS = 7,
   RTK_MODE_UNKNOWN = 0,
   RTK_MODE_NONE = 1,
   RTK_MODE_FLOAT = 2,
@@ -466,6 +469,13 @@ export type MapArea = {
   proposed_obstacles?: Polygon[];
   proposed_obstacle_info?: MapObstacleInfo[];
   id?: number;
+  has_mow_angle?: boolean;
+  mow_angle_deg?: number;
+  has_ring_direction?: boolean;
+  ring_direction?: number;
+  has_start_point?: boolean;
+  start_x?: number;
+  start_y?: number;
 };
 
 export const enum MapObstacleInfoConstants {

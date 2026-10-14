@@ -117,8 +117,7 @@ public:
       // commands/cursors; a phase-only cross-hatch snapshot therefore stays
       // IDLE too.
       constexpr uint8_t kCommandStart = 1;  // HighLevelControl::Request::COMMAND_START
-      const bool has_resumable_state =
-          !context_->area_resume_pose_index.empty() || !context_->completed_areas.empty();
+      const bool has_resumable_state = hasCoverageResumeState(*context_);
       const bool auto_continue = context_->current_command == kCommandStart && has_resumable_state;
       constexpr uint8_t kCommandStop = 8;  // HighLevelControl::Request::COMMAND_STOP
       const bool preserve_stop_hold =
@@ -127,13 +126,20 @@ public:
       {
         context_->current_command = 0;  // IDLE — require an explicit operator start
       }
+      std::size_t completed_subpaths = 0;
+      for (const auto& [area, done] : context_->area_completed_swaths)
+      {
+        completed_subpaths += done.size();
+      }
       RCLCPP_INFO(get_logger(),
                   "Restored coverage resume state from %s (current_area=%d, %zu area(s) with a "
-                  "resume cursor, %zu completed, auto_continue=%s, stop_hold=%s)",
+                  "resume cursor, %zu completed areas, %zu completed subpaths, "
+                  "auto_continue=%s, stop_hold=%s)",
                   context_->coverage_resume_path.c_str(),
                   context_->current_area,
                   context_->area_resume_pose_index.size(),
                   context_->completed_areas.size(),
+                  completed_subpaths,
                   auto_continue ? "true" : "false",
                   preserve_stop_hold ? "true" : "false");
     }
@@ -807,17 +813,42 @@ private:
             // ~/start_in_area, which sets current_command itself and never
             // reaches this handler, so this cannot cancel a targeted request.
             //
-            // EXCEPTION: not while parked in StopHoldSequence's IDLE
-            // (isResumableHoldState) — that is the operator's own "Pause" on a
-            // run still in progress, and pressing Resume/Start again must
-            // continue that SAME targeted area, not silently widen to the
-            // whole lawn. The charge-hold/emergency scenario above is
-            // unaffected: it publishes CHARGING/CRITICAL_BATTERY_CHARGING (or,
-            // once EndSession has run, IDLE_DOCKED), never plain IDLE.
+            // EXCEPTIONS (startClearsSingleAreaMode): not while parked in
+            // StopHoldSequence's IDLE — the operator's own "Pause" on a run
+            // still in progress — and not in a battery charge hold, where this
+            // START was just flagged above as a manual "Resume now" of the
+            // SAME run. Either way the operator continues that targeted area;
+            // widening to the whole lawn sent a nearly finished area-2 run
+            // back to area 0 (field report 2026-10-05). IDLE_DOCKED (session
+            // ended) and every other state keep the clear.
             if (cmd == HighLevelControl::Request::COMMAND_START &&
-                !isResumableHoldState(context_->last_high_level_status.state_name))
+                startClearsSingleAreaMode(context_->last_high_level_status.state_name,
+                                          context_->resume_after_incomplete_end))
             {
               clearSingleAreaMode(*context_);
+            }
+            // The previous session ended unfinished and EndSession kept its progress: this Start
+            // resumes it. Unless it has aged out — then it begins fresh, like any other Start.
+            if (cmd == HighLevelControl::Request::COMMAND_START &&
+                context_->resume_after_incomplete_end)
+            {
+              context_->resume_after_incomplete_end = false;
+              if (incompleteResumeExpired(context_->resume_after_incomplete_end_time,
+                                          std::chrono::steady_clock::now()))
+              {
+                RCLCPP_INFO(get_logger(),
+                            "HighLevelControl: the kept coverage progress is over %d h old — "
+                            "starting fresh instead of resuming it",
+                            static_cast<int>(kIncompleteResumeMaxAge.count()));
+                clearSingleAreaMode(*context_);
+                clear_resume_requested_.store(true);
+              }
+              else
+              {
+                RCLCPP_INFO(get_logger(),
+                            "HighLevelControl: resuming the area that was in progress "
+                            "(coverage progress kept from the last session)");
+              }
             }
           }
           // Let the BT issue stop/retry actions before doing disk I/O. The tick
@@ -858,6 +889,7 @@ private:
           {
             std::lock_guard<std::mutex> lock(context_->context_mutex);
             context_->target_area_index = static_cast<int>(req->area);
+            context_->resume_after_incomplete_end = false;
             context_->blade_direction.clearOperatorInhibit();
             context_->current_command = 1;  // COMMAND_START
             context_->critical_charge_stop_latched = false;
@@ -1062,8 +1094,8 @@ private:
         withLiveStatusFields(context_->last_high_level_status, *context_));
   }
 
-  // Publish whether a coverage session can be resumed (a persisted resume cursor
-  // or completed-area set survives from an interrupted session). Republished on
+  // Publish whether a coverage session can be resumed (a cursor or completed
+  // subpaths/areas survive from an interrupted session). Republished on
   // change; latched so a late GUI subscriber always gets the current value.
   void publishResumeAvailable()
   {
@@ -1074,7 +1106,7 @@ private:
     bool available;
     {
       std::lock_guard<std::mutex> lock(context_->context_mutex);
-      available = !context_->area_resume_pose_index.empty() || !context_->completed_areas.empty();
+      available = hasCoverageResumeState(*context_);
     }
     if (available == last_resume_available_ && resume_available_published_)
     {
@@ -1179,6 +1211,10 @@ private:
     {
       const auto transit_xml =
           std::filesystem::path(tree_file).parent_path() / "navigate_to_pose_transit.xml";
+      const auto recovery_xml =
+          std::filesystem::path(tree_file).parent_path() / "navigate_inside_boundary.xml";
+      if (std::filesystem::exists(recovery_xml))
+        context_->boundary_recovery_tree_xml = recovery_xml.string();
       if (std::filesystem::exists(transit_xml))
       {
         context_->transit_tree_xml = transit_xml.string();
@@ -1444,6 +1480,7 @@ private:
     if (clear_resume_requested_.exchange(false))
     {
       std::lock_guard<std::mutex> lock(context_->context_mutex);
+      context_->resume_after_incomplete_end = false;
       context_->area_completed_swaths.clear();
       context_->area_swath_count.clear();
       context_->area_resume_pose_index.clear();

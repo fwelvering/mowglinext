@@ -245,6 +245,7 @@ def test_navigation_launch_injects_connector_max_headland_passes() -> None:
     [
         ("pivot_sweep_radius", "chassis_circumscribed_radius"),
         ("boundary_soft_margin", "boundary_soft_margin"),
+        ("footprint_half_width", "chassis_half_width"),
     ],
 )
 def test_navigation_launch_injects_pivot_join_limits(key: str, helper: str) -> None:
@@ -315,6 +316,10 @@ def test_full_system_injects_blade_auto_reverse() -> None:
         ("rain_mode", "int", 2, 0),
         ("rain_delay_minutes", "float", 30.0, 5.0),
         ("rain_debounce_sec", "float", 0.0, 3.0),
+        # Same trap: declared in behavior_tree_node.cpp and present in the
+        # template, but never injected, so a configured tail current (e.g. 0.3 A)
+        # was ignored and the charge hold kept waiting for the compiled 0.08 A.
+        ("battery_charge_tail_current_a", "float", 0.08, 0.3),
     ],
 )
 def test_full_system_injects_rain_settings(

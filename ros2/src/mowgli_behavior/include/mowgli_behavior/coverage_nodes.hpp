@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -30,9 +31,11 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "mowgli_behavior/action_outcome.hpp"
 #include "mowgli_behavior/bt_context.hpp"
+#include "mowgli_behavior/cancel_goal.hpp"
 #include "mowgli_behavior/detour_resume.hpp"
 #include "mowgli_behavior/dig_skip.hpp"
 #include "mowgli_behavior/scan_pause.hpp"
+#include "mowgli_behavior/strip_progress.hpp"
 #include "mowgli_behavior/transit_failure.hpp"
 #include "mowgli_interfaces/action/plan_coverage.hpp"
 #include "mowgli_interfaces/coverage_geometry.hpp"
@@ -154,6 +157,26 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
                                      std::size_t cursor,
                                      std::size_t total_poses);
 
+/// Where FollowStrip drives FIRST: `unit` is the first unit not recorded in `done` (see
+/// nextUndoneUnit); `local` is the resume offset when the persisted cursor lands in that very unit,
+/// 0 (its front) otherwise. A cursor that lands in a LATER unit is trimmed when that unit is
+/// reached, not before: the earlier incomplete units are driven first. `valid` is false when every
+/// unit is already done.
+struct FirstDrive
+{
+  bool valid = false;
+  std::size_t unit = 0;
+  std::size_t local = 0;
+};
+
+/// The single mapping behind both FollowStrip's first unit and PlanCoverageArea's first transit
+/// goal. `cursor_valid` is false when the persisted cursor must be ignored (stale plan).
+FirstDrive resolveFirstDrive(const std::vector<nav_msgs::msg::Path>& units,
+                             const std::set<std::size_t>& done,
+                             bool cursor_valid,
+                             std::size_t cursor,
+                             std::size_t total_poses);
+
 // ---------------------------------------------------------------------------
 // refreshSwathProgress — publish the GUI-facing live swath progress for the
 // area currently being mown.
@@ -273,6 +296,10 @@ private:
   // Cancel every in-flight follow / transit goal, reset the transit state
   // machine and switch the blade off. Shared by onHalted() and yieldToFleet().
   void abortActiveGoals(const std::shared_ptr<BTContext>& ctx);
+  /// Cancel the blade-off transit if one is still outstanding — also one the server has not
+  /// answered yet. Called whenever the current unit is left for another (booked, skipped,
+  /// finished): a transit goal that outlives its unit keeps the navigator busy.
+  void cancelTransit(const std::shared_ptr<BTContext>& ctx, const char* why);
   // Fleet coordination: the area this pass is mowing was handed to another
   // fleet member (BTContext::fleet_excluded_areas). Save the resume cursor when
   // a path is in flight, stop everything, record the yield so the next
@@ -289,6 +316,11 @@ private:
   // RUNNING); false when it should fall back to the abort-to-next path (no
   // costmap, abort not obstacle-related, no clear resume, or budget exhausted).
   bool tryStartDetour(const std::shared_ptr<BTContext>& ctx);
+  // A detour's resume transit failed and no further detour is possible: resume
+  // the SAME unit past the blocked stretch (blocked_stretch.hpp) instead of
+  // dropping the rest of it. False when nothing drivable is left or the
+  // no-progress resume budget is spent — the caller then skips the unit.
+  bool resumeUnitPastBlockedStretch(const std::shared_ptr<BTContext>& ctx);
   /// Trim the current unit to [idx, end) and persist the moved resume cursor.
   void trimUnitAt(const std::shared_ptr<BTContext>& ctx, std::size_t idx);
 
@@ -422,6 +454,10 @@ private:
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;
   NavGoalHandle::SharedPtr nav_handle_;
   bool transit_active_ = false;
+  // See cancel_goal.hpp: set when the transit / follow goal is given up, so a goal the server
+  // has not answered yet is cancelled the moment it is accepted.
+  std::shared_ptr<GoalAbandonment> transit_abandonment_ = std::make_shared<GoalAbandonment>();
+  std::shared_ptr<GoalAbandonment> follow_abandonment_ = std::make_shared<GoalAbandonment>();
   // A blade-off transit is REQUIRED for the current swath (its start is
   // >kSegmentTransitGap away) but navigate_to_pose was not ready when we tried to
   // dispatch it. The blade is held OFF and the dispatch is retried each tick;
@@ -455,6 +491,10 @@ private:
   // Sub-paths recorded MOWED during THIS pass. Distinct from
   // ctx->area_completed_swaths[area].size(), which is cumulative across passes.
   std::size_t swaths_mowed_this_pass_ = 0;
+  // Planned path this pass left un-mowed on purpose (obstacle detours, controller turn-fallback
+  // rejoins). The unit counters above cannot show it: a unit that was mostly detoured around
+  // is still booked mowed, so the end-of-pass message reports this tally too.
+  SkippedPathTally skipped_tally_;
   bool swath_goal_sent_ = false;
   // Absolute start index of each swaths_ unit within the CONCATENATION of all
   // units (== full_path). swath_base_[k] = sum of the ORIGINAL (untrimmed) pose
@@ -669,6 +709,7 @@ private:
   rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;
   NavGoalHandle::SharedPtr nav_handle_;
+  std::shared_ptr<GoalAbandonment> nav_abandonment_ = std::make_shared<GoalAbandonment>();
   /// Watchdog: TransitToStrip used to have NO time bound — field 2026-09-21 it
   /// ran 53 s against a path its controller kept refusing.
   std::chrono::steady_clock::time_point start_time_{};
@@ -724,6 +765,7 @@ private:
   rclcpp_action::Client<Nav2Navigate>::SharedPtr nav_client_;
   std::shared_future<NavGoalHandle::SharedPtr> nav_future_;
   NavGoalHandle::SharedPtr nav_handle_;
+  std::shared_ptr<GoalAbandonment> nav_abandonment_ = std::make_shared<GoalAbandonment>();
 
   /// Terminal verdict from the result callback: a goal finished in the same
   /// instant it is accepted can lose its status message (action_outcome.hpp).

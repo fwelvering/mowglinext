@@ -140,6 +140,7 @@ func SettingsRoutes(r *gin.RouterGroup, dbProvider types.IDBProvider) {
 	GetSettingsSchema(r, dbProvider)
 	GetSettingsYAML(r, dbProvider)
 	GetSettingsYAMLDefaults(r, dbProvider)
+	GetSettingsHardwareBackend(r, dbProvider)
 	PostSettingsYAML(r, dbProvider)
 	GetSettingsStatus(r, dbProvider)
 	PostSettingsStatus(r, dbProvider)
@@ -845,6 +846,10 @@ func gnssCompatFromFlat(flat map[string]any, schemaDefaults map[string]any) map[
 
 func gnssRuntimeEnvFallbackFromFlat(flat map[string]any, schemaDefaults map[string]any) map[string]string {
 	compat := gnssCompatFromFlat(flat, schemaDefaults)
+	if stringValue(flat["gnss_stack"], gnssSchemaDefaultString(schemaDefaults, "gnss_stack", "universal")) == "disabled" {
+		compat["GNSS_STACK"] = "disabled"
+		compat["GNSS_STATUS_SOURCE"] = "external"
+	}
 	return map[string]string{
 		"GNSS_STACK":                compat["GNSS_STACK"],
 		"GNSS_STATUS_SOURCE":        compat["GNSS_STATUS_SOURCE"],
@@ -1391,6 +1396,9 @@ func GetSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRout
 
 		responseFlat := cloneFlatMap(doc.Flat)
 		applyUniversalGnssCompatibility(responseFlat, loadSchemaDefaults(dbProvider))
+		if activeHardwareBackend(doc.RuntimeEnv) == "openmower" {
+			applyOpenMowerRuntimeFallbacks(responseFlat, doc.RuntimeEnv)
+		}
 
 		c.JSON(200, responseFlat)
 	})
@@ -1436,6 +1444,17 @@ func GetSettingsYAMLDefaults(r *gin.RouterGroup, dbProvider types.IDBProvider) g
 		}
 		defaults := map[string]any{}
 		extractDefaults(schema, defaults)
+		// On a robot whose backend changes some defaults, "default" means the
+		// backend's value (config/backends/<backend>.yaml, Invariant 15).
+		applyBackendDefaults(defaults, activeHardwareBackend(loadRuntimeEnv(dbProvider)))
+		selection := map[string]any{}
+		if doc, err := loadGNSSSettingsDocument(dbProvider); err == nil {
+			selection = doc.Flat
+		}
+		if model, supplied := c.GetQuery("mower_model"); supplied {
+			selection["mower_model"] = model
+		}
+		applyModelGeometryDefaults(defaults, selection)
 		c.JSON(200, defaults)
 	})
 }
@@ -1494,6 +1513,21 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRou
 		defaults := map[string]any{}
 		if err == nil {
 			extractDefaults(schema, defaults)
+			// Backend-aware, exactly like GET /settings/yaml/defaults: a value
+			// equal to the BACKEND's default is pruned, so the robot falls back
+			// to that same value.
+			applyBackendDefaults(defaults, activeHardwareBackend(loadRuntimeEnv(dbProvider)))
+			// Resolve against the requested model before filling absent values
+			// and pruning. Explicit zero must survive when its preset is nonzero.
+			selection := cloneFlatMap(existing)
+			if model, changed := payload["mower_model"]; changed {
+				if model == nil {
+					delete(selection, "mower_model")
+				} else {
+					selection["mower_model"] = model
+				}
+			}
+			applyModelGeometryDefaults(defaults, selection)
 			for key, value := range defaults {
 				if _, exists := existing[key]; !exists {
 					existing[key] = value
@@ -1560,6 +1594,10 @@ func PostSettingsYAML(r *gin.RouterGroup, dbProvider types.IDBProvider) gin.IRou
 		}
 		if err := writePreservingPerms(string(configFilePath), []byte(header+string(out))); err != nil {
 			c.JSON(500, ErrorResponse{Error: err.Error()})
+			return
+		}
+		if err := writeMavrosRuntimeConfig(dbProvider); err != nil {
+			c.JSON(500, ErrorResponse{Error: "settings saved, but MAVROS runtime config failed: " + err.Error()})
 			return
 		}
 
