@@ -30,6 +30,7 @@
 #include "geometry_msgs/msg/point32.hpp"
 #include "geometry_msgs/msg/polygon.hpp"
 #include "mowgli_behavior/blade_direction.hpp"
+#include "mowgli_behavior/blade_ready.hpp"
 #include "mowgli_behavior/cross_hatch.hpp"
 #include "mowgli_behavior/dig_skip.hpp"
 #include "mowgli_behavior/start_blocked_escape.hpp"
@@ -138,6 +139,11 @@ struct BTContext
   /// operator service and explicit start handlers. Direction resets only at
   /// EndSession; operator inhibition also clears on an explicit mowing start.
   bool blade_auto_reverse{false};
+  bool mowing_enabled{true};  // explicit commissioning dry run; hardware also enforces it
+  BladeReadyConfig blade_ready_config;
+  // Sticky provenance: a controller stream that disappears cannot become a
+  // telemetry-less installation and regain permission via the timer fallback.
+  bool blade_telemetry_seen{false};  // guarded by context_mutex
   BladeDirection blade_direction;
   // One DDS request writer preserves ordering between coverage, manual and
   // operator blade requests. Access only from the owning callback group.
@@ -470,6 +476,14 @@ struct BTContext
   /// a fixed area+params, so the re-planned path is identical and the index is
   /// stable. Cleared (erased) when the area completes; reset by EndSession.
   std::map<uint32_t, std::size_t> area_resume_pose_index;
+  /// How far each INTERRUPTED unit of an area got: area -> (unit -> local pose index inside the
+  /// full unit). area_resume_pose_index is ONE scalar for the unit being driven, so the moment a
+  /// later unit is dispatched it forgets an earlier unit that was abandoned at 99 % (field
+  /// 2026-10-14: a 2294-pose unit was re-driven from pose 0 on four passes in a row). FollowStrip
+  /// records a unit's furthest progress here whenever it persists the cursor and trims the unit at
+  /// it on the next pass; erased when the unit is booked mowed, with the rest of an area's state
+  /// when the plan changes, and by EndSession. Persisted with the resume cursor.
+  std::map<uint32_t, std::map<std::size_t, std::size_t>> area_unit_progress;
   /// Total pose count of the area's continuous full_path (the denominator for
   /// the resume-cursor coverage_percent). Set by FollowStrip at dispatch.
   std::map<uint32_t, std::size_t> area_path_pose_count;
@@ -1055,7 +1069,8 @@ inline constexpr std::chrono::hours kIncompleteResumeMaxAge{24};
 /// mid-path resume cursor. Nothing to keep (or resume) otherwise.
 inline bool hasRecordedCoverageProgress(const BTContext& ctx)
 {
-  if (!ctx.completed_areas.empty() || !ctx.area_resume_pose_index.empty())
+  if (!ctx.completed_areas.empty() || !ctx.area_resume_pose_index.empty() ||
+      !ctx.area_unit_progress.empty())
   {
     return true;
   }
