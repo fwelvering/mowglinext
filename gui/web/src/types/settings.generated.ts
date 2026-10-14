@@ -106,6 +106,7 @@ export interface SettingsValues {
     undock_speed?: number | null;
     dock_approach_distance?: number | null;
     dock_approach_overshoot?: number | null;
+    dock_approach_lateral_offset?: number | null;
     dock_max_retries?: number | null;
     dock_use_charger_detection?: boolean;
     dock_charging_threshold?: number | null;

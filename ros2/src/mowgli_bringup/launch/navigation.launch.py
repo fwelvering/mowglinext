@@ -90,6 +90,7 @@ from robot_config_util import (
     global_inflation_radius,
     derive_blade_load_params,
     derive_turn_speed,
+    dock_approach_target,
     load_robot_params,
     planning_obstacle_margin,
     resolve_lidar_enabled,
@@ -487,6 +488,10 @@ def generate_launch_description() -> LaunchDescription:
     # /ros2_ws/config/mowgli_robot.yaml raised NameError and aborted the whole
     # navigation launch.
     dock_approach_overshoot = 0.05
+    # Sideways trim of the dock approach target (metres, positive = left of the
+    # driving direction). Same module-level-default reason as the overshoot above.
+    # Applied to home_dock.pose ONLY, never to the stored dock_pose_x/y.
+    dock_approach_lateral_offset = 0.0
     # SimpleChargingDock charging-current threshold (amps). 0.3 is the
     # production default (see nav2_params.yaml for the "0.1 stops too
     # early, 0.5 over-presses" rationale). Operator-overridable via
@@ -594,6 +599,8 @@ def generate_launch_description() -> LaunchDescription:
             rt_rp.get("dock_approach_distance", dock_approach_distance))
         dock_approach_overshoot = float(
             rt_rp.get("dock_approach_overshoot", 0.05))
+        dock_approach_lateral_offset = float(
+            rt_rp.get("dock_approach_lateral_offset", 0.0))
         dock_charging_threshold = float(
             rt_rp.get("dock_charging_threshold", dock_charging_threshold))
         dock_max_retries = int(rt_rp.get("dock_max_retries", dock_max_retries))
@@ -732,14 +739,18 @@ def generate_launch_description() -> LaunchDescription:
         # 5 cm short like the un-offset configuration did 2026-05-17.
         # The overshoot is yaml-tunable (dock_approach_overshoot in
         # mowgli_robot.yaml); 0 disables the shift cleanly.
-        import math as _math
-        _cos_yaw = _math.cos(dock_pose_yaw)
-        _sin_yaw = _math.sin(dock_pose_yaw)
-        home_dock["pose"] = [
-            dock_pose_x + dock_approach_overshoot * _cos_yaw,
-            dock_pose_y + dock_approach_overshoot * _sin_yaw,
-            dock_pose_yaw,
-        ]
+        #
+        # dock_approach_lateral_offset additionally trims the target sideways
+        # (positive = left of the driving direction) — for a base whose approach
+        # line is physically blocked on one side (e.g. a garage edge over the dock).
+        # It moves this target ONLY: the stored dock_pose_x/y stays where the
+        # robot really charges, because fusion_graph pins the fused pose onto it
+        # while charging. See robot_config_util.dock_approach_target.
+        home_dock["pose"] = dock_approach_target(
+            dock_pose_x, dock_pose_y, dock_pose_yaw,
+            overshoot=dock_approach_overshoot,
+            lateral_offset=dock_approach_lateral_offset,
+        )
         # SimpleChargingDock plugin params — charging-current threshold
         # is operator-tunable so the static nav2_params.yaml value can be
         # overridden per-site from mowgli_robot.yaml + GUI.

@@ -54,6 +54,7 @@ const CATALOG: Record<string, ParamMeta> = {
 
   // ── Docking ──────────────────────────────────────────────────────────────
   dock_approach_overshoot: {label: "paramCatalog.dock_approach_overshoot.label", description: "paramCatalog.dock_approach_overshoot.description", tier: "middle", group: "Docking", unit: "m"},
+  dock_approach_lateral_offset: {label: "paramCatalog.dock_approach_lateral_offset.label", description: "paramCatalog.dock_approach_lateral_offset.description", tier: "middle", group: "Docking", unit: "m"},
   use_gps_dock_detection: {label: "paramCatalog.use_gps_dock_detection.label", description: "paramCatalog.use_gps_dock_detection.description", tier: "middle", group: "Docking"},
   dock_pose_yaw_sigma_rad: {label: "paramCatalog.dock_pose_yaw_sigma_rad.label", description: "paramCatalog.dock_pose_yaw_sigma_rad.description", tier: "expert", group: "Docking", unit: "rad"},
 
