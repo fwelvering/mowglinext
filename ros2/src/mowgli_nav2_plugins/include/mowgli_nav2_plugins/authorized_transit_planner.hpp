@@ -79,6 +79,12 @@ public:
 private:
   friend class AuthorizedTransitPlannerTest;
   void onGeometry(visualization_msgs::msg::MarkerArray::ConstSharedPtr message);
+  // Connects a start that lies inside the dock body to the nearest clear authorized cell that does
+  // not lie toward the charging station; refuses a start too close to the station to pivot.
+  geometry_msgs::msg::PoseStamped dockExitAnchor(const geometry_msgs::msg::PoseStamped& start,
+                                                 const transit::Geometry& geometry,
+                                                 const transit::Geometry& relaxed,
+                                                 const std::function<void()>& check) const;
   bool costSegmentClear(transit::Point a, transit::Point b) const;
   bool costSegmentClear(transit::Point a, transit::Point b, std::vector<double>& cuts) const;
   geometry_msgs::msg::PoseStamped anchor(const geometry_msgs::msg::PoseStamped& endpoint,
