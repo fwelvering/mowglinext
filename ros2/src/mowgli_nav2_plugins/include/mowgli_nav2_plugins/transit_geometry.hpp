@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -132,6 +133,70 @@ inline std::vector<double> cuts(Point a, Point b, const std::vector<Ring>& rings
   return result;
 }
 
+// Area centroid (shoelace). A repeated closing vertex adds a zero-length edge and changes nothing.
+inline std::optional<Point> areaCentroid(const Ring& ring)
+{
+  double area2 = 0, cx = 0, cy = 0;
+  for (std::size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++)
+  {
+    const double c = cross(ring[j], ring[i]);
+    area2 += c;
+    cx += (ring[j].x + ring[i].x) * c;
+    cy += (ring[j].y + ring[i].y) * c;
+  }
+  if (ring.size() < 3 || !(std::abs(area2) > kEpsilon) || !std::isfinite(area2))
+    return std::nullopt;
+  return Point{cx / (3 * area2), cy / (3 * area2)};
+}
+
+// The dock's own frame, recovered from the two rings map_server builds around the dock pose
+// (`rebuild_dock_polygons`): the body spans local x in [-dock_body_length, 0] and the approach
+// corridor lies directly behind it, further along -x. +x points from the corridor through the
+// body TOWARD THE CHARGING STATION (the robot docks nose-first, staging_x_offset < 0), and x = 0 is
+// the body's station-side edge, i.e. the line through the dock pose.
+struct DockFrame
+{
+  Point origin;  // on the station-side edge of the body, on its centre line
+  Point axis;  // unit vector, toward the station
+
+  Point local(Point p) const
+  {
+    const Point d{p.x - origin.x, p.y - origin.y};
+    return {d.x * axis.x + d.y * axis.y, -d.x * axis.y + d.y * axis.x};
+  }
+};
+// How far the corridor's station-side edge may sit from the body's rear edge and still count as
+// "directly behind it" (float32 polygon points, nothing more).
+constexpr double kDockRingAdjacency = 0.02;
+inline std::optional<DockFrame> dockFrame(const Ring& body, const Ring& corridor)
+{
+  const auto body_centre = areaCentroid(body), corridor_centre = areaCentroid(corridor);
+  if (!body_centre || !corridor_centre)
+    return std::nullopt;
+  Point axis{body_centre->x - corridor_centre->x, body_centre->y - corridor_centre->y};
+  const double length = std::hypot(axis.x, axis.y);
+  if (!std::isfinite(length) || !(length > kEpsilon))
+    return std::nullopt;
+  axis = {axis.x / length, axis.y / length};
+  const auto along = [&](Point p)
+  {
+    return (p.x - body_centre->x) * axis.x + (p.y - body_centre->y) * axis.y;
+  };
+  double body_front = -INFINITY, body_rear = INFINITY, corridor_front = -INFINITY;
+  for (const auto& p : body)
+  {
+    body_front = std::max(body_front, along(p));
+    body_rear = std::min(body_rear, along(p));
+  }
+  for (const auto& p : corridor)
+    corridor_front = std::max(corridor_front, along(p));
+  // Anything else is not the map_server dock layout: fail closed rather than guess a heading.
+  if (std::abs(corridor_front - body_rear) > kDockRingAdjacency)
+    return std::nullopt;
+  return DockFrame{{body_centre->x + body_front * axis.x, body_centre->y + body_front * axis.y},
+                   axis};
+}
+
 struct Geometry
 {
   std::vector<Ring> allowed;
@@ -142,6 +207,9 @@ struct Geometry
   // start there must plan its way OUT. Goals, search cells and every path segment still treat the
   // ring as blocked.
   std::vector<bool> start_exempt;
+  // Set only when the snapshot carries exactly one dock body and one approach corridor; without
+  // it a start inside the dock body cannot be oriented and stays START_OCCUPIED.
+  std::optional<DockFrame> dock;
   double obstacle_margin{0};
 
   double margin(std::size_t i) const
@@ -166,6 +234,7 @@ struct Geometry
   {
     Geometry result;
     result.allowed = allowed;
+    result.dock = dock;
     result.obstacle_margin = obstacle_margin;
     for (std::size_t i = 0; i < blocked.size(); ++i)
     {

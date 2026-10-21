@@ -99,6 +99,53 @@ TEST(TransitGeometry, StartExemptRingsAreBlockedUntilTheyAreLeftOut)
   EXPECT_FALSE(geometry.segmentClear({0.5, 0.5}, {2, 0.5}));
 }
 
+// The rings map_server_node::rebuild_dock_polygons builds around a dock pose: the body spans
+// [-0.80, 0] x +-0.275 and the approach corridor [-1.50, -0.80] x +-0.40 in the dock frame (+x
+// toward the station), each closed by repeating its first point.
+Ring dockRect(double x, double y, double yaw, double x_min, double x_max, double half_width)
+{
+  Ring ring;
+  for (const auto& [cx, cy] : std::vector<std::pair<double, double>>{
+           {x_max, half_width}, {x_max, -half_width}, {x_min, -half_width}, {x_min, half_width}})
+    ring.push_back(
+        {x + std::cos(yaw) * cx - std::sin(yaw) * cy, y + std::sin(yaw) * cx + std::cos(yaw) * cy});
+  ring.push_back(ring.front());
+  return ring;
+}
+Ring dockBody(double x, double y, double yaw)
+{
+  return dockRect(x, y, yaw, -0.80, 0, 0.275);
+}
+Ring dockCorridor(double x, double y, double yaw)
+{
+  return dockRect(x, y, yaw, -1.50, -0.80, 0.40);
+}
+Point dockPoint(double x, double y, double yaw, double local_x, double local_y)
+{
+  return {x + std::cos(yaw) * local_x - std::sin(yaw) * local_y,
+          y + std::sin(yaw) * local_x + std::cos(yaw) * local_y};
+}
+
+TEST(TransitGeometry, DockFrameIsRecoveredFromTheBodyAndItsCorridor)
+{
+  for (double yaw : {0.0, 2.3, -1.2})
+  {
+    const auto frame = transit::dockFrame(dockBody(1, 2, yaw), dockCorridor(1, 2, yaw));
+    ASSERT_TRUE(frame.has_value()) << yaw;
+    EXPECT_NEAR(frame->axis.x, std::cos(yaw), 1e-9);
+    EXPECT_NEAR(frame->axis.y, std::sin(yaw), 1e-9);
+    const auto origin = frame->local({1, 2});
+    EXPECT_NEAR(origin.x, 0, 1e-9);
+    EXPECT_NEAR(origin.y, 0, 1e-9);
+    const auto station = frame->local(dockPoint(1, 2, yaw, 0.5, -0.1));
+    EXPECT_NEAR(station.x, 0.5, 1e-9);
+    EXPECT_NEAR(station.y, -0.1, 1e-9);
+  }
+  // A corridor that is not directly behind the body is not the map_server layout: no frame.
+  EXPECT_FALSE(transit::dockFrame(dockBody(1, 2, 0), dockCorridor(0.5, 2, 0)).has_value());
+  EXPECT_FALSE(transit::dockFrame(dockBody(1, 2, 0), dockBody(1, 2, 0)).has_value());
+}
+
 TEST(TransitGeometry, RasterMatchesOriginalCellClassifier)
 {
   for (double shift : {0.0, 1048576.07, -1048576.07})
@@ -265,7 +312,8 @@ protected:
         {rclcpp::Parameter("plugins", std::vector<std::string>{}),
          rclcpp::Parameter("filters", std::vector<std::string>{}),
          rclcpp::Parameter("global_frame", "map"),
-         rclcpp::Parameter("rolling_window", false)});
+         rclcpp::Parameter("rolling_window", false),
+         rclcpp::Parameter("footprint", footprint())});
     options.arguments({"--ros-args", "-r", "__node:=transit_test_map"});
     map_ = std::make_shared<nav2_costmap_2d::Costmap2DROS>(options);
     ASSERT_EQ(map_->on_configure(rclcpp_lifecycle::State()), nav2::CallbackReturn::SUCCESS);
@@ -280,20 +328,26 @@ protected:
     planner_.cleanup();
     map_->on_cleanup(rclcpp_lifecycle::State());
   }
+  // Empty: the costmap's default radius footprint.
+  virtual std::string footprint() const
+  {
+    return "[]";
+  }
   void geometry(const std::vector<Ring>& rings,
                 const std::vector<Ring>& obstacles = {},
                 double obstacle_margin = 0,
-                const std::vector<Ring>& dock_bodies = {})
+                const std::vector<Ring>& dock_bodies = {},
+                const std::vector<Ring>& dock_corridors = {})
   {
     auto message = std::make_shared<visualization_msgs::msg::MarkerArray>();
-    for (std::size_t i = 0; i < rings.size() + obstacles.size(); ++i)
+    const auto add = [&](const Ring& ring, const char* ns, double scale)
     {
       visualization_msgs::msg::Marker marker;
       marker.header.frame_id = "map";
-      marker.ns = i < rings.size() ? "area" : "obstacle";
-      marker.scale.x = i < rings.size() ? 0 : obstacle_margin;
+      marker.ns = ns;
+      marker.scale.x = scale;
       marker.action = marker.ADD;
-      for (const auto& p : i < rings.size() ? rings[i] : obstacles[i - rings.size()])
+      for (const auto& p : ring)
       {
         geometry_msgs::msg::Point point;
         point.x = p.x;
@@ -301,32 +355,42 @@ protected:
         marker.points.push_back(point);
       }
       message->markers.push_back(marker);
-    }
-    for (const auto& body : dock_bodies)
-    {
-      visualization_msgs::msg::Marker marker;
-      marker.header.frame_id = "map";
-      marker.ns = "dock_body";
-      marker.action = marker.ADD;
-      for (const auto& p : body)
-      {
-        geometry_msgs::msg::Point point;
-        point.x = p.x;
-        point.y = p.y;
-        marker.points.push_back(point);
-      }
-      message->markers.push_back(marker);
-    }
+    };
+    for (const auto& ring : rings)
+      add(ring, "area", 0);
+    for (const auto& ring : obstacles)
+      add(ring, "obstacle", obstacle_margin);
+    for (const auto& ring : dock_corridors)
+      add(ring, "dock_corridor", 0.01);
+    for (const auto& ring : dock_bodies)
+      add(ring, "dock_body", 0);
     planner_.onGeometry(message);
   }
-  geometry_msgs::msg::PoseStamped pose(double x, double y)
+  // A dock at (x, y, yaw) inside the 8 x 4 m test area, laid out as map_server publishes it.
+  void dockGeometry(double x, double y, double yaw, const std::vector<Ring>& obstacles = {})
+  {
+    geometry(
+        {rectangle(-4, 0, 4, 4)}, obstacles, 0, {dockBody(x, y, yaw)}, {dockCorridor(x, y, yaw)});
+  }
+  geometry_msgs::msg::PoseStamped pose(double x, double y, double yaw = 0)
   {
     geometry_msgs::msg::PoseStamped result;
     result.header.frame_id = "map";
     result.pose.position.x = x;
     result.pose.position.y = y;
-    result.pose.orientation.w = 1;
+    result.pose.orientation.z = std::sin(yaw / 2);
+    result.pose.orientation.w = std::cos(yaw / 2);
     return result;
+  }
+  nav_msgs::msg::Path plan(Point start, double start_yaw, Point goal)
+  {
+    return planner_.createPlan(pose(start.x, start.y, start_yaw),
+                               pose(goal.x, goal.y),
+                               {},
+                               []
+                               {
+                                 return false;
+                               });
   }
   nav_msgs::msg::Path plan(double x0, double y0, double x1, double y1)
   {
@@ -337,6 +401,10 @@ protected:
                                {
                                  return false;
                                });
+  }
+  const Geometry& plannerGeometry() const
+  {
+    return planner_.geometry_;
   }
   bool authorized(const nav_msgs::msg::Path& path)
   {
@@ -442,42 +510,106 @@ TEST_F(AuthorizedTransitPlannerTest, DockCorridorAndObstacleCostsArePreserved)
     }
   EXPECT_THROW(plan(-1, 2, 1, 2), nav2_core::NoValidPathCouldBeFound);
 }
+// The shipped chassis (robot_config_util.chassis_footprint: front 0.53, rear -0.17, half width
+// 0.275 m, margin included). The planner derives the station and the pivot reach from it.
+class DockedTransitPlannerTest : public AuthorizedTransitPlannerTest
+{
+protected:
+  std::string footprint() const override
+  {
+    return "[[0.53, 0.275], [0.53, -0.275], [-0.17, -0.275], [-0.17, 0.275]]";
+  }
+  // The leg from the real start to the exit cell is the only part that may touch the dock body;
+  // everything after it is an ordinary authorized path that keeps the whole ring blocked.
+  void expectLeavesTheBodyAwayFromTheStation(
+      const nav_msgs::msg::Path& path, double x, double y, double yaw, Point start)
+  {
+    ASSERT_GE(path.poses.size(), 3U);
+    EXPECT_DOUBLE_EQ(path.poses.front().pose.position.x, start.x);
+    EXPECT_DOUBLE_EQ(path.poses.front().pose.position.y, start.y);
+    const Point exit{path.poses[1].pose.position.x, path.poses[1].pose.position.y};
+    Geometry dock_only;
+    dock_only.blocked = {dockBody(x, y, yaw)};
+    EXPECT_TRUE(dock_only.clear(exit));
+    const auto frame = transit::dockFrame(dockBody(x, y, yaw), dockCorridor(x, y, yaw));
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_LE(frame->local(exit).x, frame->local(start).x + 1e-9)
+        << "the exit leg closes on the charging station";
+    nav_msgs::msg::Path rest;
+    rest.poses.assign(path.poses.begin() + 1, path.poses.end());
+    EXPECT_TRUE(authorized(rest));
+  }
+};
+
 // Field 2026-10-16: a coverage unit ended 0.51 m in front of the dock, inside the dock body
 // rectangle, and every transit after it was refused with START_OCCUPIED until the operator pressed
 // Play (whose first act is driving 1 m out of the rectangle).
-TEST_F(AuthorizedTransitPlannerTest, StartInsideTheDockBodyPlansItsWayOut)
+TEST_F(DockedTransitPlannerTest, StartInsideTheDockBodyPlansItsWayOut)
 {
-  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
-  geometry({rectangle(-4, 0, 4, 4)}, {}, 0, {body});
-  const auto path = plan(0, 2, 3, 2);
-  ASSERT_GE(path.poses.size(), 3U);
-  EXPECT_DOUBLE_EQ(path.poses.front().pose.position.x, 0);
-  EXPECT_DOUBLE_EQ(path.poses.front().pose.position.y, 2);
-  EXPECT_DOUBLE_EQ(path.poses.back().pose.position.x, 3);
-  // Only the first leg (the real start to the exit cell) may touch the dock body; everything after
-  // it is an ordinary authorized path that keeps the whole ring blocked.
-  Geometry dock_only;
-  dock_only.blocked = {body};
-  EXPECT_TRUE(dock_only.clear({path.poses[1].pose.position.x, path.poses[1].pose.position.y}));
-  nav_msgs::msg::Path rest;
-  rest.poses.assign(path.poses.begin() + 1, path.poses.end());
-  EXPECT_TRUE(authorized(rest));
+  dockGeometry(1, 2, 0);
+  const Point start = dockPoint(1, 2, 0, -0.51, 0);
+  const auto path = plan(start, M_PI, {-3, 2});
+  EXPECT_DOUBLE_EQ(path.poses.back().pose.position.x, -3);
+  expectLeavesTheBodyAwayFromTheStation(path, 1, 2, 0, start);
 }
-TEST_F(AuthorizedTransitPlannerTest, DockBodyStaysForbiddenForGoalsAndForPathsAcrossIt)
+// An oriented dock, the robot well inside its body: the nearest clear cell is just past the
+// body's station-side edge, i.e. under the charging station. It must leave sideways or backwards.
+TEST_F(DockedTransitPlannerTest, OrientedDockNeverExitsTowardTheStation)
 {
-  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
-  geometry({rectangle(-4, 0, 4, 4)}, {}, 0, {body});
-  EXPECT_THROW(plan(3, 2, 0, 2), nav2_core::GoalOccupied);
+  const double yaw = 2.3;
+  dockGeometry(1, 2, yaw);
+  const Point start = dockPoint(1, 2, yaw, -0.2, 0);
+  // Precondition: a clear authorized cell lies 0.25 m ahead, nearer than any side (0.275 m) or
+  // rear (0.60 m) exit. The old nearest-in-any-direction search took it.
+  ASSERT_TRUE(plannerGeometry().authorized(dockPoint(1, 2, yaw, 0.05, 0)));
+  ASSERT_TRUE(plannerGeometry().clear(dockPoint(1, 2, yaw, 0.05, 0)));
+  const auto path = plan(start, yaw, {-3, 1});
+  expectLeavesTheBodyAwayFromTheStation(path, 1, 2, yaw, start);
+}
+// Pivoting near the station would swing the nose into it, whatever the exit direction.
+TEST_F(DockedTransitPlannerTest, StartTooCloseToTheStationToPivotIsStillOccupied)
+{
+  const double yaw = 2.3;
+  dockGeometry(1, 2, yaw);
+  EXPECT_THROW(plan(dockPoint(1, 2, yaw, -0.05, 0), yaw, {-3, 1}), nav2_core::StartOccupied);
+  EXPECT_THROW(plan(dockPoint(1, 2, yaw, -0.15, 0.1), yaw, {-3, 1}), nav2_core::StartOccupied);
+}
+TEST_F(DockedTransitPlannerTest, BlockedNearestExitFallsBackToTheNextOne)
+{
+  // From 0.15 m off the centre line the nearest exit is the +y side (0.125 m); a drawn obstacle
+  // along that whole side leaves the rear (0.29 m, into the approach corridor) as the next one.
+  const Ring side = rectangle(-0.2, 2.27, 1.2, 2.8);
+  dockGeometry(1, 2, 0, {side});
+  const Point start = dockPoint(1, 2, 0, -0.51, 0.15);
+  const auto path = plan(start, 0, {-3, 1});
+  expectLeavesTheBodyAwayFromTheStation(path, 1, 2, 0, start);
+  const Point exit{path.poses[1].pose.position.x, path.poses[1].pose.position.y};
+  EXPECT_LT(exit.y, 2.275) << "left through the blocked side";
+  EXPECT_LT(exit.x, 0.2) << "the rear exit is the next nearest";
+}
+TEST_F(DockedTransitPlannerTest, DockBodyStaysForbiddenForGoalsAndForPathsAcrossIt)
+{
+  dockGeometry(1, 2, 0);
+  EXPECT_THROW(plan({3, 2}, 0, dockPoint(1, 2, 0, -0.4, 0)), nav2_core::GoalOccupied);
   // A start OUTSIDE the body still routes around it, never through it.
-  const auto path = plan(-2, 2, 2, 2);
-  EXPECT_TRUE(authorized(path));
+  EXPECT_TRUE(authorized(plan({-2, 2}, 0, {3, 2})));
 }
-TEST_F(AuthorizedTransitPlannerTest, StartInsideTheDockBodyWithoutAWayOutIsStillOccupied)
+TEST_F(DockedTransitPlannerTest, StartInsideTheDockBodyWithoutAWayOutIsStillOccupied)
 {
-  // The authorized union is nothing but the body: there is no clear cell to leave to.
-  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
-  geometry({body}, {}, 0, {body});
-  EXPECT_THROW(plan(0, 2, 3, 2), nav2_core::StartOccupied);
+  // Both sides and the rear are drawn obstacles, and the front is the station.
+  dockGeometry(1,
+               2,
+               0,
+               {rectangle(0, 2.27, 1.6, 2.9),
+                rectangle(0, 1.1, 1.6, 1.73),
+                rectangle(-0.6, 1.1, 0.21, 2.9)});
+  EXPECT_THROW(plan(dockPoint(1, 2, 0, -0.51, 0), M_PI, {-3, 1}), nav2_core::StartOccupied);
+}
+TEST_F(DockedTransitPlannerTest, StartInsideADockBodyThatCannotBeOrientedIsStillOccupied)
+{
+  // No approach corridor: nothing says which side the station is on.
+  geometry({rectangle(-4, 0, 4, 4)}, {}, 0, {dockBody(1, 2, 0)});
+  EXPECT_THROW(plan(dockPoint(1, 2, 0, -0.51, 0), M_PI, {-3, 1}), nav2_core::StartOccupied);
 }
 TEST_F(AuthorizedTransitPlannerTest, StartInsideAnObstacleIsNotExempt)
 {

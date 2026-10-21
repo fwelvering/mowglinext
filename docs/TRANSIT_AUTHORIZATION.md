@@ -39,7 +39,22 @@ rectangle, and refusing there stranded it (field 2026-10-16: every transit
 out). Such a start is judged without the dock body and connected to the nearest
 clear, authorized, obstacle-free cell within 1.0 m by an exit leg that obeys every
 other obstacle, the authorized union and the obstacle costs. With no such cell the
-start stays `START_OCCUPIED`. Goals inside the dock body, the search grid and every
+start stays `START_OCCUPIED`.
+
+The exit never closes on the charging station. The planner recovers the dock
+frame from the body ring and the `dock_corridor` ring directly behind it (+x from
+the corridor through the body toward the station; x = 0 is the body's
+station-side edge, the line through the dock pose). With not exactly one body and
+one adjacent corridor in the snapshot the start stays `START_OCCUPIED`. The exit
+cell must lie no further along +x than the start, so the leg goes backwards
+(toward the corridor) or sideways, never past the station-side edge. The
+transit controller may pivot in place before the leg, to a heading sampled along
+the path rather than the leg, so the bound is heading-independent: the disc the
+footprint sweeps around the start (radius = farthest footprint vertex) must end
+`kStationClearance` (0.10 m) short of the station, taken to begin at the docked
+robot's nose (footprint front reach ahead of the dock pose). With the shipped
+footprint (front 0.53 m, sweep radius 0.597 m) that admits starts at least
+0.167 m behind the dock pose; nearer starts stay `START_OCCUPIED`. Goals inside the dock body, the search grid and every
 path segment after the exit leg keep the whole ring forbidden, so a transit can
 leave the dock body but never enter or cross it.
 
