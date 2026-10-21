@@ -33,6 +33,7 @@
 #include "mowgli_behavior/blade_ready.hpp"
 #include "mowgli_behavior/cross_hatch.hpp"
 #include "mowgli_behavior/dig_skip.hpp"
+#include "mowgli_behavior/fleet_yield.hpp"
 #include "mowgli_behavior/start_blocked_escape.hpp"
 #include "mowgli_behavior/transit_avoidance.hpp"
 #include "mowgli_interfaces/msg/emergency.hpp"
@@ -89,6 +90,17 @@ struct BTContext
   /// Timestamp of the last emergency message received.
   std::chrono::steady_clock::time_point last_emergency_time{std::chrono::steady_clock::now()};
 
+  /// Shared IsEmergency/fleet predicate. Caller holds context_mutex.
+  /// A stale stream (>2 s) fails safe even when cached bits are clear. The
+  /// firmware latch also counts: software e-stop can latch without an active
+  /// physical trigger. Keep the existing startup grace and strict > boundary.
+  bool emergencyActiveOrStale(
+      std::chrono::steady_clock::time_point steady_now = std::chrono::steady_clock::now()) const
+  {
+    return latest_emergency.active_emergency || latest_emergency.latched_emergency ||
+           steady_now - last_emergency_time > std::chrono::seconds(2);
+  }
+
   // -----------------------------------------------------------------------
   // Thread safety
   // -----------------------------------------------------------------------
@@ -124,6 +136,9 @@ struct BTContext
   /// proofing note on behavior_tree_node's clear_resume_requested_ for the
   /// pattern to follow instead of a mutex if that ever happens.
   mutable std::mutex context_mutex;
+
+  /// Fleet stop ownership is never persisted; all access takes context_mutex.
+  FleetYieldState fleet_yield;
 
   // -----------------------------------------------------------------------
   // Command state (set by HighLevelControl service handler)
