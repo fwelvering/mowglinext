@@ -15,6 +15,9 @@ transit::Point point(const geometry_msgs::msg::PoseStamped& pose)
 }
 constexpr double kTerminalOutsideLimit = 0.15;
 constexpr double kAnchorLimit = 0.30;
+// How far a start inside the dock body may have to travel to reach clear ground: the body is
+// 0.80 m deep and 0.55 m wide, so the way out is at most that, plus the cell grid.
+constexpr double kDockExitLimit = 1.0;
 }  // namespace
 
 void AuthorizedTransitPlanner::configure(const nav2::LifecycleNode::WeakPtr& parent,
@@ -110,10 +113,11 @@ void AuthorizedTransitPlanner::onGeometry(
     }
     if (marker.ns == "area" || marker.ns == "dock_corridor")
       next.allowed.push_back(std::move(ring));
-    else if (marker.ns == "obstacle")
+    else if (marker.ns == "obstacle" || marker.ns == "dock_body")
     {
       valid &= std::isfinite(marker.scale.x) && marker.scale.x >= 0;
       next.blocked_margins.push_back(marker.scale.x);
+      next.start_exempt.push_back(marker.ns == "dock_body");
       next.blocked.push_back(std::move(ring));
     }
     else
@@ -200,6 +204,55 @@ geometry_msgs::msg::PoseStamped AuthorizedTransitPlanner::anchor(
   return result;
 }
 
+geometry_msgs::msg::PoseStamped AuthorizedTransitPlanner::dockExitAnchor(
+    const geometry_msgs::msg::PoseStamped& start,
+    const transit::Geometry& geometry,
+    const transit::Geometry& relaxed) const
+{
+  const auto p = point(start);
+  unsigned mx, my;
+  if (!private_map_.worldToMap(p.x, p.y, mx, my))
+    throw nav2_core::StartOccupied("Transit start inside the dock body, outside the costmap");
+  const int radius = static_cast<int>(std::ceil(kDockExitLimit / private_map_.getResolution()));
+  double best = INFINITY;
+  auto result = start;
+  for (int y = std::max(0, static_cast<int>(my) - radius);
+       y <= std::min(static_cast<int>(private_map_.getSizeInCellsY()) - 1,
+                     static_cast<int>(my) + radius);
+       ++y)
+    for (int x = std::max(0, static_cast<int>(mx) - radius);
+         x <= std::min(static_cast<int>(private_map_.getSizeInCellsX()) - 1,
+                       static_cast<int>(mx) + radius);
+         ++x)
+    {
+      transit::Point q;
+      private_map_.mapToWorld(x, y, q.x, q.y);
+      const double d = transit::distance(p, q);
+      // The exit cell must be clear of EVERYTHING, the dock body included. Only the leg from the
+      // start to it is judged without the dock body: every other obstacle and the authorized union
+      // still apply to it, and so do the obstacle costs.
+      if (d < best && d <= kDockExitLimit && private_map_.getCost(x, y) < 253 &&
+          geometry.authorized(q) && geometry.clear(q) && relaxed.segmentAuthorized(p, q) &&
+          relaxed.segmentClear(p, q) && costSegmentClear(p, q))
+      {
+        best = d;
+        result.pose.position.x = q.x;
+        result.pose.position.y = q.y;
+      }
+    }
+  if (!std::isfinite(best))
+    throw nav2_core::StartOccupied("Transit start inside the dock body without a clear way out");
+  RCLCPP_INFO(_logger,
+              "Transit starts inside the dock body at (%.2f, %.2f): leaving it through (%.2f, "
+              "%.2f), %.2f m away",
+              p.x,
+              p.y,
+              result.pose.position.x,
+              result.pose.position.y,
+              best);
+  return result;
+}
+
 bool AuthorizedTransitPlanner::pathValid(const nav_msgs::msg::Path& path,
                                          const transit::Geometry& geometry) const
 {
@@ -272,20 +325,29 @@ nav_msgs::msg::Path AuthorizedTransitPlanner::createPlan(
     std::unique_lock lock(*shared_map_->getMutex());
     private_map_ = *shared_map_;
   }
-  const auto occupied = [&](const auto& endpoint)
+  const auto occupied = [&](const auto& endpoint, const transit::Geometry& view)
   {
     unsigned x, y;
     const auto p = point(endpoint);
-    return !geometry.clear(p) ||
+    return !view.clear(p) ||
            (private_map_.worldToMap(p.x, p.y, x, y) && private_map_.getCost(x, y) >= 253);
   };
-  if (occupied(start))
+  // The robot ends a coverage unit in front of the dock more often than not, which is INSIDE the
+  // dock body rectangle (0.80 x 0.55 m ahead of the dock pose). A start there is judged without
+  // that ring and connected to clear ground by a bounded exit leg; a GOAL in it stays refused, and
+  // the search and every path segment keep the whole ring blocked.
+  const bool start_in_dock_body = geometry.insideStartExempt(point(start));
+  const transit::Geometry relaxed =
+      start_in_dock_body ? geometry.withoutStartExempt() : transit::Geometry{};
+  if (occupied(start, start_in_dock_body ? relaxed : geometry))
     throw nav2_core::StartOccupied("Transit start occupied by an obstacle");
-  if (occupied(goal))
+  if (occupied(goal, geometry))
     throw nav2_core::GoalOccupied("Transit goal occupied by an obstacle");
   // Terminal exceptions never enter the search grid, so even nearby endpoints
   // cannot turn outside slack into a through-corridor.
-  const auto start_anchor = anchor(start, geometry), goal_anchor = anchor(goal, geometry);
+  const auto start_anchor =
+      start_in_dock_body ? dockExitAnchor(start, geometry, relaxed) : anchor(start, geometry);
+  const auto goal_anchor = anchor(goal, geometry);
   for (unsigned y = 0; y < private_map_.getSizeInCellsY(); ++y)
   {
     check();

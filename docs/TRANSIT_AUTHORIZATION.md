@@ -12,8 +12,9 @@ an obstacle while the costmap catches up.
 `/map_server_node/transit_geometry` is a reliable, transient-local
 `visualization_msgs/MarkerArray` containing one complete snapshot. Marker
 namespaces `area` and `dock_corridor` are authorized outer rings; `obstacle`
-rings are forbidden and `scale.x` is their explicit clearance margin in metres
-(zero for the dock body). An empty array invalidates transit during map
+rings are forbidden and `scale.x` is their explicit clearance margin in metres.
+`dock_body` is forbidden in the same way (margin zero) but is the one ring a
+START may lie inside, see below. An empty array invalidates transit during map
 replacement; the debounced keepout rebuild publishes the complete snapshot.
 No timestamp is used as a freshness timeout or an observation identity.
 Replacing the area list retains the separately calibrated dock pose, corridor
@@ -30,6 +31,17 @@ Terminal legs never create search cells.
 Starts/goals on polygon edges connect to an interior grid anchor even when
 grid alignment puts the endpoint cell centre outside. Obstacles still block
 these legs. A missing connection fails planning without unrestricted fallback.
+
+A start inside the dock body is not refused. The robot ends coverage units in
+front of the dock more often than not, which is inside that 0.80 x 0.55 m
+rectangle, and refusing there stranded it (field 2026-10-16: every transit
+`START_OCCUPIED` until the operator pressed Play, whose first act is driving 1 m
+out). Such a start is judged without the dock body and connected to the nearest
+clear, authorized, obstacle-free cell within 1.0 m by an exit leg that obeys every
+other obstacle, the authorized union and the obstacle costs. With no such cell the
+start stays `START_OCCUPIED`. Goals inside the dock body, the search grid and every
+path segment after the exit leg keep the whole ring forbidden, so a transit can
+leave the dock body but never enter or cross it.
 
 Each search edge and every final path segment is checked against exact polygon
 crossings and crossed obstacle-cost cells. Smoothing that leaves the union
