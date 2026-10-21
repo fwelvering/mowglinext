@@ -166,6 +166,26 @@ ResumeLocation resolveResumeLocation(const std::vector<nav_msgs::msg::Path>& uni
 /// (resolveResumeLocation) and the per-unit progress (BTContext::area_unit_progress).
 std::size_t resumeOffsetForUnit(std::size_t unit_poses, std::size_t local);
 
+/// The pose index each unit's FIRST follow goal starts at, one entry per unit. This is the ONE
+/// rule both FollowStrip::onStart (which trims every unit at its entry) and resolveFirstDrive (the
+/// first transit goal) apply, so the transit always lands where the first follow goal starts and
+/// the robot never drives back along a unit it was just sent past.
+///
+/// A unit's start is the FURTHER of
+///  - the persisted cursor's offset, when `cursor_valid` and the cursor lands in that unit
+///    (resolveResumeLocation), and
+///  - its own recorded progress (`unit_progress`, BTContext::area_unit_progress; null when the
+///    plan is stale), through resumeOffsetForUnit, for a unit not recorded in `done`.
+/// The cursor can sit BEHIND the unit's progress (sendFollowGoal resets the cursor to the trim
+/// offset while the progress never moves backwards), which is why neither may win unconditionally.
+std::vector<std::size_t> resolveUnitStartOffsets(
+    const std::vector<nav_msgs::msg::Path>& units,
+    const std::set<std::size_t>& done,
+    bool cursor_valid,
+    std::size_t cursor,
+    std::size_t total_poses,
+    const std::map<std::size_t, std::size_t>* unit_progress);
+
 /// Where FollowStrip drives FIRST: `unit` is the first unit not recorded in `done` (see
 /// nextUndoneUnit); `local` is the resume offset when the persisted cursor lands in that very unit,
 /// 0 (its front) otherwise. A cursor that lands in a LATER unit is trimmed when that unit is
@@ -182,7 +202,8 @@ struct FirstDrive
 /// goal. `cursor_valid` is false when the persisted cursor must be ignored (stale plan).
 ///
 /// `unit_progress` (unit -> poses driven, BTContext::area_unit_progress; null when the plan is
-/// stale) gives the first unit its OWN resume offset: the further of that and the cursor's.
+/// stale) gives the first unit its OWN resume offset; `local` is resolveUnitStartOffsets' entry
+/// for `unit`, i.e. exactly where FollowStrip's first follow goal starts.
 FirstDrive resolveFirstDrive(const std::vector<nav_msgs::msg::Path>& units,
                              const std::set<std::size_t>& done,
                              bool cursor_valid,
