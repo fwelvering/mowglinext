@@ -969,6 +969,29 @@
     "sourceUnchanged": "Publication inchangée depuis {{seconds}} s",
     "lidarNoEstimate": "Pas encore d’estimation"
   },
+  "stopReason": {
+    "genericTitle": "La tondeuse s'est arrêtée",
+    "AREA_START_BLOCKED": {
+      "title": "Arrêt : la position de la tondeuse est bloquée",
+      "hint": "Chaque passage a été refusé car la tondeuse se trouve sur un endroit bloqué, souvent juste devant la base. Déplacez-la d'un ou deux mètres et appuyez sur Lecture : la progression est conservée."
+    },
+    "AREA_NO_PROGRESS": {
+      "title": "Arrêt : une zone n'a pas pu être tondue",
+      "hint": "Plusieurs passages de suite n'ont rien tondu de nouveau, la zone a donc été abandonnée. Vérifiez la carte et les obstacles autour, puis appuyez sur Lecture pour réessayer."
+    },
+    "DOCK_NAV_FAILED": {
+      "title": "Arrêt : la tondeuse n'a pas pu retourner à la base",
+      "hint": "Elle est restée là où elle s'est arrêtée. Conduisez-la ou portez-la à la base, ou appuyez sur Lecture pour continuer à tondre."
+    },
+    "UNDOCK_FAILED": {
+      "title": "Arrêt : la tondeuse n'a pas pu sortir de la base",
+      "hint": "Vérifiez que rien ne bloque la sortie de la base, puis appuyez sur Lecture."
+    },
+    "CHARGER_FAILED": {
+      "title": "Arrêt : la tondeuse est à la base mais ne charge pas",
+      "hint": "Vérifiez les contacts de charge et que la tondeuse est bien droite dans la base."
+    }
+  },
   "mowgliNextPage": {
     "mowerOnDockTop": "Tondeuse sur sa station — vue de dessus",
     "mowerTop": "Tondeuse — vue de dessus",
