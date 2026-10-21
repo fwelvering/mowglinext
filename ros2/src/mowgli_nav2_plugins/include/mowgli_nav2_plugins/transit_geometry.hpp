@@ -102,11 +102,44 @@ struct Geometry
   std::vector<Ring> allowed;
   std::vector<Ring> blocked;
   std::vector<double> blocked_margins;
+  // Parallel to `blocked` (a missing entry means false): rings a START may lie inside. Only the
+  // dock body is one — the robot legitimately ends a coverage unit in front of the dock, and a
+  // start there must plan its way OUT. Goals, search cells and every path segment still treat the
+  // ring as blocked.
+  std::vector<bool> start_exempt;
   double obstacle_margin{0};
 
   double margin(std::size_t i) const
   {
     return i < blocked_margins.size() ? blocked_margins[i] : obstacle_margin;
+  }
+
+  bool startExempt(std::size_t i) const
+  {
+    return i < start_exempt.size() && start_exempt[i];
+  }
+  bool insideStartExempt(Point p) const
+  {
+    for (std::size_t i = 0; i < blocked.size(); ++i)
+      if (startExempt(i) && inside(p, blocked[i]))
+        return true;
+    return false;
+  }
+  // The same geometry without the start-exempt rings: what a start inside one of them is judged
+  // and connected against.
+  Geometry withoutStartExempt() const
+  {
+    Geometry result;
+    result.allowed = allowed;
+    result.obstacle_margin = obstacle_margin;
+    for (std::size_t i = 0; i < blocked.size(); ++i)
+    {
+      if (startExempt(i))
+        continue;
+      result.blocked.push_back(blocked[i]);
+      result.blocked_margins.push_back(margin(i));
+    }
+    return result;
   }
 
   bool authorized(Point p) const

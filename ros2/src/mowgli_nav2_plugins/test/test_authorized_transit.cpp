@@ -77,6 +77,23 @@ TEST(TransitGeometry, ObstaclesRejectWholeSegmentsIncludingMargin)
   EXPECT_TRUE(geometry.segmentClear({-2, 1.2}, {2, 1.2}));
 }
 
+TEST(TransitGeometry, StartExemptRingsAreBlockedUntilTheyAreLeftOut)
+{
+  Geometry geometry;
+  geometry.blocked = {rectangle(0, 0, 1, 1), rectangle(3, 0, 4, 1)};
+  geometry.blocked_margins = {0, 0.1};
+  geometry.start_exempt = {true, false};
+  EXPECT_TRUE(geometry.insideStartExempt({0.5, 0.5}));
+  EXPECT_FALSE(geometry.insideStartExempt({3.5, 0.5}));
+  EXPECT_FALSE(geometry.clear({0.5, 0.5}));
+  const auto relaxed = geometry.withoutStartExempt();
+  EXPECT_TRUE(relaxed.clear({0.5, 0.5}));
+  EXPECT_FALSE(relaxed.clear({3.5, 0.5}));
+  EXPECT_FALSE(relaxed.clear({3.05, 1.05}));  // the other ring keeps its own margin
+  EXPECT_TRUE(relaxed.segmentClear({0.5, 0.5}, {2, 0.5}));
+  EXPECT_FALSE(geometry.segmentClear({0.5, 0.5}, {2, 0.5}));
+}
+
 class AuthorizedTransitPlannerTest : public testing::Test
 {
 protected:
@@ -106,7 +123,9 @@ protected:
     planner_.cleanup();
     map_->on_cleanup(rclcpp_lifecycle::State());
   }
-  void geometry(const std::vector<Ring>& rings, const std::vector<Ring>& obstacles = {})
+  void geometry(const std::vector<Ring>& rings,
+                const std::vector<Ring>& obstacles = {},
+                const std::vector<Ring>& dock_bodies = {})
   {
     auto message = std::make_shared<visualization_msgs::msg::MarkerArray>();
     for (std::size_t i = 0; i < rings.size() + obstacles.size(); ++i)
@@ -116,6 +135,21 @@ protected:
       marker.ns = i < rings.size() ? "area" : "obstacle";
       marker.action = marker.ADD;
       for (const auto& p : i < rings.size() ? rings[i] : obstacles[i - rings.size()])
+      {
+        geometry_msgs::msg::Point point;
+        point.x = p.x;
+        point.y = p.y;
+        marker.points.push_back(point);
+      }
+      message->markers.push_back(marker);
+    }
+    for (const auto& body : dock_bodies)
+    {
+      visualization_msgs::msg::Marker marker;
+      marker.header.frame_id = "map";
+      marker.ns = "dock_body";
+      marker.action = marker.ADD;
+      for (const auto& p : body)
       {
         geometry_msgs::msg::Point point;
         point.x = p.x;
@@ -248,6 +282,48 @@ TEST_F(AuthorizedTransitPlannerTest, DockCorridorAndObstacleCostsArePreserved)
         map_->getCostmap()->setCost(x, y, 254);
     }
   EXPECT_THROW(plan(-1, 2, 1, 2), nav2_core::NoValidPathCouldBeFound);
+}
+// Field 2026-10-16: a coverage unit ended 0.51 m in front of the dock, inside the dock body
+// rectangle, and every transit after it was refused with START_OCCUPIED until the operator pressed
+// Play (whose first act is driving 1 m out of the rectangle).
+TEST_F(AuthorizedTransitPlannerTest, StartInsideTheDockBodyPlansItsWayOut)
+{
+  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
+  geometry({rectangle(-4, 0, 4, 4)}, {}, {body});
+  const auto path = plan(0, 2, 3, 2);
+  ASSERT_GE(path.poses.size(), 3U);
+  EXPECT_DOUBLE_EQ(path.poses.front().pose.position.x, 0);
+  EXPECT_DOUBLE_EQ(path.poses.front().pose.position.y, 2);
+  EXPECT_DOUBLE_EQ(path.poses.back().pose.position.x, 3);
+  // Only the first leg (the real start to the exit cell) may touch the dock body; everything after
+  // it is an ordinary authorized path that keeps the whole ring blocked.
+  Geometry dock_only;
+  dock_only.blocked = {body};
+  EXPECT_TRUE(dock_only.clear({path.poses[1].pose.position.x, path.poses[1].pose.position.y}));
+  nav_msgs::msg::Path rest;
+  rest.poses.assign(path.poses.begin() + 1, path.poses.end());
+  EXPECT_TRUE(authorized(rest));
+}
+TEST_F(AuthorizedTransitPlannerTest, DockBodyStaysForbiddenForGoalsAndForPathsAcrossIt)
+{
+  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
+  geometry({rectangle(-4, 0, 4, 4)}, {}, {body});
+  EXPECT_THROW(plan(3, 2, 0, 2), nav2_core::GoalOccupied);
+  // A start OUTSIDE the body still routes around it, never through it.
+  const auto path = plan(-2, 2, 2, 2);
+  EXPECT_TRUE(authorized(path));
+}
+TEST_F(AuthorizedTransitPlannerTest, StartInsideTheDockBodyWithoutAWayOutIsStillOccupied)
+{
+  // The authorized union is nothing but the body: there is no clear cell to leave to.
+  const Ring body = rectangle(-0.3, 1.7, 0.3, 2.3);
+  geometry({body}, {}, {body});
+  EXPECT_THROW(plan(0, 2, 3, 2), nav2_core::StartOccupied);
+}
+TEST_F(AuthorizedTransitPlannerTest, StartInsideAnObstacleIsNotExempt)
+{
+  geometry({rectangle(-4, 0, 4, 4)}, {rectangle(-0.3, 1.7, 0.3, 2.3)});
+  EXPECT_THROW(plan(0, 2, 3, 2), nav2_core::StartOccupied);
 }
 TEST_F(AuthorizedTransitPlannerTest, MissingAndInvalidatedGeometryFailClosed)
 {
