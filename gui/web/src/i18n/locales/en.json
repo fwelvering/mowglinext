@@ -967,6 +967,29 @@
     "sourceUnchanged": "Publication unchanged for {{seconds}} s",
     "lidarNoEstimate": "No estimate yet"
   },
+  "stopReason": {
+    "genericTitle": "The mower stopped",
+    "AREA_START_BLOCKED": {
+      "title": "Stopped: the mower's own position is blocked",
+      "hint": "Every pass was refused because the mower stands on a blocked spot, often right in front of the dock. Move it a metre or two and press Play: the progress is kept."
+    },
+    "AREA_NO_PROGRESS": {
+      "title": "Stopped: an area could not be mown",
+      "hint": "Several passes in a row mowed nothing new, so the area was given up. Check the map and the obstacles around it, then press Play to try again."
+    },
+    "DOCK_NAV_FAILED": {
+      "title": "Stopped: the mower could not drive back to the dock",
+      "hint": "It is standing where it stopped. Drive or carry it to the dock, or press Play to continue mowing."
+    },
+    "UNDOCK_FAILED": {
+      "title": "Stopped: the mower could not back out of the dock",
+      "hint": "Check that nothing blocks the way out of the dock, then press Play."
+    },
+    "CHARGER_FAILED": {
+      "title": "Stopped: the mower is at the dock but is not charging",
+      "hint": "Check the charging contacts and that the mower sits straight in the dock."
+    }
+  },
   "mowgliNextPage": {
     "mowerOnDockTop": "Mower on its dock — top view",
     "mowerTop": "Mower — top view",

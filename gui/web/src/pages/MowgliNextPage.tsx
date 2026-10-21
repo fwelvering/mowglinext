@@ -41,6 +41,7 @@ import type {MiniArea, MiniProgress} from "../concept/components/LiveMapMini.tsx
 import {ProgressRibbon} from "../concept/components/ProgressRibbon.tsx";
 import {SoilWetBanner} from "../components/dashboard/SoilWetBanner.tsx";
 import {DigEscalationBanner} from "../components/dashboard/DigEscalationBanner.tsx";
+import {StopReasonBanner} from "../components/dashboard/StopReasonBanner.tsx";
 import {isCoverageScanPaused} from "../components/dashboard/scanPaused.ts";
 import {WeatherChip} from "../concept/components/WeatherChip.tsx";
 import {useWeather} from "../hooks/useWeather.ts";
@@ -119,6 +120,8 @@ function useMowerData(backend?: string) {
     rain: status.rain_detected ?? false,
     isMoving,
     scanPaused,
+    stopReason: highLevelStatus.stop_reason ?? "",
+    stopDetail: highLevelStatus.stop_detail ?? "",
     toolWidth: (settings?.tool_width as number | undefined) ?? 0.18,
     batteryFullPercent: (settings?.battery_full_percent as number | undefined) ?? 95,
     batteryManualResumePercent: (settings?.battery_manual_resume_percent as number | undefined) ?? 30,
@@ -392,6 +395,7 @@ export const MowgliNextPage = () => {
         {/* Repeat-dig escalation: hardware_bridge halted the mission — the
             operator needs to know why nothing is moving and how to clear it */}
         <DigEscalationBanner variants={riseFade}/>
+        <StopReasonBanner reason={data.stopReason} detail={data.stopDetail} variants={riseFade}/>
 
         {/* IrriSense: the garden is wet — warn before anyone starts a mow */}
         <SoilWetBanner variants={riseFade}/>
