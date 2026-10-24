@@ -1,3 +1,5 @@
+import {hasEmergency, emergencyIsKnown, emergencyClearanceUnverified} from '../utils/statusTelemetry';
+import {useAsyncHandler} from "../hooks/useAsyncHandler";
 import {useBladeTelemetry} from "../hooks/useBladeTelemetry";
 import {motorDisplayValue} from "../utils/motorTelemetry";
 import {StatusMowerIllustration} from "../components/dashboard/StatusMowerIllustration";
@@ -76,14 +78,15 @@ function useMowerData(backend?: string) {
   const areaMap = useMowingMap();
 
   const isCharging = highLevelStatus.is_charging ?? status.is_charging ?? false;
-  const isEmergency = highLevelStatus.emergency ?? emergency.active_emergency ?? false;
+  const isEmergency = hasEmergency(emergency, highLevelStatus);
+  const commandEmergency = highLevelStatus.emergency ?? emergency.active_emergency ?? false;
   const batteryPercent = computeBatteryPercent(
     highLevelStatus.battery_percent, power.v_battery, settings,
   );
   const gpsStatus = deriveGpsStatus(gnss);
 
-  const stateName = highLevelStatus.state_name ?? (
-    isEmergency ? "EMERGENCY" : isCharging ? "CHARGING" : "IDLE_DOCKED"
+  const stateName = isEmergency ? "EMERGENCY" : highLevelStatus.state_name ?? (
+    isCharging ? "CHARGING" : ""
   );
 
   // Motion is derived from the NUMERIC high-level state, which status_nodes.cpp
@@ -97,17 +100,22 @@ function useMowerData(backend?: string) {
 
   return {
     state: stateName,
+    statusKnown: (highLevelStatus.state !== undefined && highLevelStatus.state !== 0) || isEmergency || isCharging,
+    emergencyKnown: emergencyIsKnown(emergency, highLevelStatus),
+    clearanceUnverified: emergencyClearanceUnverified(emergency, highLevelStatus),
     battery: batteryPercent,
-    batteryKnown: hasBatteryReading(power.v_battery),
+    batteryKnown: (hasBatteryReading(power.v_battery) && Number.isFinite(batteryPercent)),
     charging: isCharging,
     // The charging/contact bit is also true on a full docked mower. The BT's
     // IDLE_DOCKED name can follow a failed return, so it is not dock evidence.
     docked: power.charger_enabled ?? status.is_charging ?? highLevelStatus.is_charging,
     settings,
     emergency: isEmergency,
+    commandEmergency,
+    commandState: highLevelStatus.state_name ?? (commandEmergency ? "EMERGENCY" : isCharging ? "CHARGING" : "IDLE_DOCKED"),
     gps: gpsStatus.percent,
     gpsLabel: gpsStatus.label,
-    vBattery: power.v_battery ?? 0,
+    vBattery: power.v_battery ?? NaN,
     // Battery charge current (shown while docked/charging) vs. blade motor
     // current (shown on the Blades tile) are DIFFERENT signals — keep them
     // separate so the Blades tile doesn't read the charger.
@@ -118,6 +126,7 @@ function useMowerData(backend?: string) {
     escTemp: blade.escTemp,
     motorTemp: blade.motorTemp,
     rain: status.rain_detected ?? false,
+    rainKnown: status.rain_detected !== undefined,
     isMoving,
     scanPaused,
     stopReason: highLevelStatus.stop_reason ?? "",
@@ -140,6 +149,7 @@ function useMowerData(backend?: string) {
 }
 
 export const MowgliNextPage = () => {
+  const asyncHandler = useAsyncHandler();
   const {t} = useTranslation();
   const isMobile = useIsMobile();
   const navigate = useNavigate();
@@ -234,14 +244,14 @@ export const MowgliNextPage = () => {
     : null;
 
   const phase: "idle" | "playing" | "returning" | "alert" =
-    data.emergency ? "alert" :
-    data.state === "RETURNING_HOME" ? "returning" :
+    data.commandEmergency ? "alert" :
+    data.commandState === "RETURNING_HOME" ? "returning" :
     data.isMoving ? "playing" : "idle";
   const chargeHold: ChargeHold | undefined = deriveChargeHold(
-    data.state, data.battery, data.batteryManualResumePercent, data.batteryLowPercent,
+    data.commandState, data.battery, data.batteryManualResumePercent, data.batteryLowPercent,
     data.batteryFullPercent, data.coverageSessionActive,
   );
-  const isResumingMowing = data.state === "RESUMING_UNDOCKING";
+  const isResumingMowing = data.commandState === "RESUMING_UNDOCKING";
 
   // ── ETA estimate ──
   //
@@ -263,7 +273,11 @@ export const MowgliNextPage = () => {
   // Headline mirrors the subline's branch order: SCAN_PAUSED gets the operator
   // explanation first while the mission remains active; otherwise a moving mower
   // gets its ETA/mowing copy instead of falling through to the idle text.
-  const headline = data.scanPaused
+  const headline = data.clearanceUnverified
+    ? t("telemetry.emergencyClearanceUnverified")
+    : !data.statusKnown && !data.emergency
+    ? t("telemetry.statusUnknown")
+    : data.scanPaused
     ? <>{t('mowgliNextPage.headlineScanPausedPrefix')}<em style={{fontStyle: 'italic', color: 'var(--amber, #FFB84D)'}}>{t('mowgliNextPage.headlineScanPausedEmphasis')}</em>{t('mowgliNextPage.headlineScanPausedSuffix')}</>
     : isResumingMowing
       ? t('mowgliNextPage.headlineResumingMowing')
@@ -291,7 +305,11 @@ export const MowgliNextPage = () => {
         ? <span style={{color: 'var(--rose, #FF6B7A)'}}>{t('mowgliNextPage.emergencyStop')}</span>
         : <>{t('mowgliNextPage.headlineIdlePrefix')}<em style={{fontStyle: 'italic', color: 'var(--lime, #7CFFB2)'}}>{t('mowgliNextPage.headlineIdleEmphasis')}</em>{t('mowgliNextPage.headlineIdleSuffix')}</>;
 
-  const subline = data.scanPaused
+  const subline = data.clearanceUnverified
+    ? t("telemetry.emergencyClearanceUnverified")
+    : !data.statusKnown && !data.emergency
+    ? t("telemetry.statusUnknown")
+    : data.scanPaused
     ? t('mowgliNextPage.sublineScanPaused')
     : isResumingMowing
       ? t('mowgliNextPage.sublineResumingMowing')
@@ -388,7 +406,7 @@ export const MowgliNextPage = () => {
           <StatusOrb
             tone={data.emergency ? "alert" : data.isMoving ? "live" : data.charging ? "charging" : "resting"}
             size={10}
-            label={data.scanPaused ? t('mowgliNextPage.orbScanPaused') : data.isMoving ? t('mowgliNextPage.orbMowing') : data.charging ? t('mowgliNextPage.orbCharging') : data.emergency ? t('mowgliNextPage.orbAlert') : t('mowgliNextPage.orbIdle')}
+            label={!data.statusKnown && !data.emergency ? t("telemetry.statusUnknown") : data.scanPaused ? t('mowgliNextPage.orbScanPaused') : data.isMoving ? t('mowgliNextPage.orbMowing') : data.charging ? t('mowgliNextPage.orbCharging') : data.emergency ? t('mowgliNextPage.orbAlert') : t('mowgliNextPage.orbIdle')}
           />
         </motion.header>
 
@@ -411,7 +429,7 @@ export const MowgliNextPage = () => {
                 todayMowedM2={todayMowedM2} totalArea={totalArea}
               />
             </motion.div>
-            <motion.div variants={riseFade}><LiveMapCard polygons={polygons} progress={progress} robot={robotNormalised} dock={dockNormalised} coverage={coveragePct} onViewMap={() => navigate("/map")}/></motion.div>
+            <motion.div variants={riseFade}><LiveMapCard polygons={polygons} progress={progress} robot={robotNormalised} dock={dockNormalised} coverage={coveragePct} onViewMap={asyncHandler(() => navigate("/map"))}/></motion.div>
             <motion.div variants={riseFade}><TilesRow data={data}/></motion.div>
             <motion.div variants={riseFade}><HealthCard data={data} hardware={hardware} mavros={mavros}/></motion.div>
           </div>
@@ -430,7 +448,7 @@ export const MowgliNextPage = () => {
               <motion.div variants={riseFade}><HealthCard data={data} hardware={hardware} mavros={mavros}/></motion.div>
             </div>
             <div style={{display: 'flex', flexDirection: 'column', gap: 18}}>
-              <motion.div variants={riseFade}><LiveMapCard polygons={polygons} progress={progress} robot={robotNormalised} dock={dockNormalised} coverage={coveragePct} height={300} onViewMap={() => navigate("/map")}/></motion.div>
+              <motion.div variants={riseFade}><LiveMapCard polygons={polygons} progress={progress} robot={robotNormalised} dock={dockNormalised} coverage={coveragePct} height={300} onViewMap={asyncHandler(() => navigate("/map"))}/></motion.div>
               <motion.div variants={riseFade}><TilesRow data={data}/></motion.div>
             </div>
           </div>
@@ -700,7 +718,7 @@ function StatTile({label, value, unit, hint, accent, icon}: StatTileProps) {
   );
 }
 
-type HealthRow = {k: string; ok: boolean; note: string; action?: ReactNode};
+type HealthRow = {id: string; k: string; ok: boolean; note: string; action?: ReactNode};
 
 type DashboardHardware = ReturnType<typeof useHardwareBackend>;
 type DashboardMavros = ReturnType<typeof useMavrosInfo>;
@@ -710,16 +728,17 @@ export function HealthCard({data, hardware, mavros}: {
   hardware: DashboardHardware;
   mavros: DashboardMavros;
 }) {
+  const asyncHandler = useAsyncHandler();
   const {t} = useTranslation();
   const navigate = useNavigate();
   const weather = useWeather();
   const rows: HealthRow[] = [
-    {k: t('mowgliNextPage.gpsSignal'),         ok: data.gps > 0,           note: data.gpsLabel},
-    {k: data.rain ? t('mowgliNextPage.rainDetectedRow') : t('mowgliNextPage.noRain'),
-                              ok: !data.rain,             note: data.rain ? t('mowgliNextPage.mowingPausedShort') : t('mowgliNextPage.conditionsOk')},
-    {k: data.emergency ? t('mowgliNextPage.alertActive') : t('mowgliNextPage.noAlerts'),
-                              ok: !data.emergency,        note: data.emergency ? t('mowgliNextPage.toRearm') : t('mowgliNextPage.allClear')},
-    ...(Number.isFinite(data.motorTemp) ? [{k: t('mowgliNextPage.motorTemp', {temp: motorDisplayValue(data.motorTemp)}),
+    {id: 'gnss', k: t('mowgliNextPage.gpsSignal'),         ok: data.gps > 0,           note: data.gpsLabel},
+    {id: 'rain', k: data.rain ? t('mowgliNextPage.rainDetectedRow') : data.rainKnown ? t('mowgliNextPage.noRain') : t('telemetry.statusUnknown'),
+                              ok: data.rainKnown && !data.rain, note: data.rain ? t('mowgliNextPage.mowingPausedShort') : data.rainKnown ? '' : t('telemetry.statusUnknown')},
+    {id: 'emergency', k: data.clearanceUnverified ? t('telemetry.emergencyClearanceUnverified') : data.emergency ? t('mowgliNextPage.alertActive') : data.emergencyKnown ? t('mowgliNextPage.noAlerts') : t('telemetry.statusUnknown'),
+                              ok: data.emergencyKnown && !data.emergency, note: data.emergency ? t('mowgliNextPage.toRearm') : data.emergencyKnown ? '' : t('telemetry.statusUnknown')},
+    ...(Number.isFinite(data.motorTemp) ? [{id: 'motor-temperature', k: t('mowgliNextPage.motorTemp', {temp: motorDisplayValue(data.motorTemp)}),
                               ok: data.motorTemp < 55,    note: data.motorTemp >= 55 ? t('mowgliNextPage.runningHot') : t('mowgliNextPage.nominal')}] : []),
   ];
   // STM32 firmware compatibility belongs exclusively to the native Mowgli
@@ -730,6 +749,7 @@ export function HealthCard({data, hardware, mavros}: {
   // tells the operator to reflash; mowing is blocked by PreFlightCheck.
   if (!hardware.loading && hardware.backend === "mowgli" && data.firmwareCompatible !== null) {
     rows.push({
+      id: 'firmware',
       k: data.firmwareCompatible
         ? t('mowgliNextPage.firmwareOk')
         : t('mowgliNextPage.firmwareIncompatible'),
@@ -743,7 +763,7 @@ export function HealthCard({data, hardware, mavros}: {
         <Button
           type="primary"
           size="small"
-          onClick={() => navigate('/settings?section=updates')}
+          onClick={asyncHandler(() => navigate('/settings?section=updates'))}
         >
           {t('mowgliNextPage.firmwareFlashCta')}
         </Button>
@@ -755,6 +775,7 @@ export function HealthCard({data, hardware, mavros}: {
     const firmware = formatMavrosFirmwareVersion(mavros.vehicle);
     const board = formatMavrosBoardIdentity(mavros.vehicle);
     rows.push({
+      id: 'fcu-connection',
       k: mavros.state.connected
         ? t('mowgliNextPage.mavrosFcuConnected')
         : t('mowgliNextPage.mavrosFcuDisconnected'),
@@ -763,6 +784,7 @@ export function HealthCard({data, hardware, mavros}: {
     });
     if (board) {
       rows.push({
+        id: 'fcu-board',
         k: t('mowgliNextPage.mavrosAutopilotBoard'),
         ok: mavros.state.connected === true,
         note: board,
@@ -788,7 +810,7 @@ export function HealthCard({data, hardware, mavros}: {
       <div className="health-card-body">
         <div style={{display: 'flex', flexDirection: 'column', gap: 10}}>
           {rows.map(r => (
-            <div key={r.k} style={{display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap'}}>
+            <div key={r.id} style={{display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap'}}>
               <span style={{
                 width: 8, height: 8, borderRadius: 4,
                 background: r.ok ? 'var(--lime, #7CFFB2)' : 'var(--rose, #FF6B7A)',
@@ -805,7 +827,7 @@ export function HealthCard({data, hardware, mavros}: {
         </div>
         <StatusMowerIllustration settings={data.settings} docked={data.docked}/>
       </div>
-      <Button type="link" onClick={() => navigate('/settings?section=updates')} style={{paddingLeft: 0, marginTop: 10}}>
+      <Button type="link" onClick={asyncHandler(() => navigate('/settings?section=updates'))} style={{paddingLeft: 0, marginTop: 10}}>
         {t('updates.title')}
       </Button>
     </GlassCard>
