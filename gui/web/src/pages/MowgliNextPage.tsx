@@ -31,7 +31,7 @@ import {rasterizeMowProgress} from "../utils/mowProgress.ts";
 import {useMowerAction} from "../components/MowerActions.tsx";
 import {computeBatteryPercent, hasBatteryReading} from "../utils/battery.ts";
 import {deriveGpsStatus} from "../utils/gpsStatus.ts";
-import {deriveIsMoving} from "../utils/mowerMotion.ts";
+import {deriveIsMoving, isSessionActive} from "../utils/mowerMotion.ts";
 import {deriveChargeHold} from "../utils/chargeHold.ts";
 
 import {GlassCard} from "../concept/components/GlassCard.tsx";
@@ -130,6 +130,7 @@ function useMowerData(backend?: string) {
     isMoving,
     scanPaused,
     stopReason: highLevelStatus.stop_reason ?? "",
+    sessionActive: isSessionActive(stateNum),
     stopDetail: highLevelStatus.stop_detail ?? "",
     toolWidth: (settings?.tool_width as number | undefined) ?? 0.18,
     batteryFullPercent: (settings?.battery_full_percent as number | undefined) ?? 95,
@@ -413,7 +414,8 @@ export const MowgliNextPage = () => {
         {/* Repeat-dig escalation: hardware_bridge halted the mission — the
             operator needs to know why nothing is moving and how to clear it */}
         <DigEscalationBanner variants={riseFade}/>
-        <StopReasonBanner reason={data.stopReason} detail={data.stopDetail} variants={riseFade}/>
+        <StopReasonBanner reason={data.stopReason} detail={data.stopDetail}
+                          sessionActive={data.sessionActive} variants={riseFade}/>
 
         {/* IrriSense: the garden is wet — warn before anyone starts a mow */}
         <SoilWetBanner variants={riseFade}/>

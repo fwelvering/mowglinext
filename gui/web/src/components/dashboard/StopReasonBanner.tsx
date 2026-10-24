@@ -8,6 +8,13 @@ interface StopReasonBannerProps {
     reason?: string;
     /** HighLevelStatus.stop_detail: a short English sentence with the numbers. */
     detail?: string;
+    /**
+     * True while a session is in progress (AUTONOMOUS / RECORDING /
+     * MANUAL_MOWING, see isSessionActive). The tree records a reason when it
+     * retires ONE area and keeps mowing the others, so the banner waits until
+     * the mower has actually stopped (IDLE, or docked after a failure).
+     */
+    sessionActive?: boolean;
     variants?: Variants;
 }
 
@@ -19,9 +26,9 @@ interface StopReasonBannerProps {
  * then. Unknown codes (a newer robot than this GUI) still show their raw code
  * and detail rather than disappearing.
  */
-export function StopReasonBanner({reason, detail, variants}: StopReasonBannerProps) {
+export function StopReasonBanner({reason, detail, sessionActive = false, variants}: StopReasonBannerProps) {
     const {t} = useTranslation();
-    if (!reason) return null;
+    if (!reason || sessionActive) return null;
     const known = isKnownStopReason(reason);
     return (
         <motion.div

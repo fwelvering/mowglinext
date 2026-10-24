@@ -2,6 +2,7 @@ import {describe, expect, it} from "vitest";
 import {render, screen} from "@testing-library/react";
 import {StopReasonBanner} from "./StopReasonBanner.tsx";
 import {KNOWN_STOP_REASONS} from "../../utils/stopReason.ts";
+import {isSessionActive} from "../../utils/mowerMotion.ts";
 import en from "../../i18n/locales/en.json";
 import fr from "../../i18n/locales/fr.json";
 
@@ -19,6 +20,18 @@ describe("StopReasonBanner", () => {
         expect(screen.queryByTestId("stop-reason-banner")).not.toBeInTheDocument();
         rerender(<StopReasonBanner/>);
         expect(screen.queryByTestId("stop-reason-banner")).not.toBeInTheDocument();
+    });
+
+    it("is hidden while the mower is working and shown once it has stopped", () => {
+        // The tree records AREA_START_BLOCKED when it retires ONE area and then
+        // keeps mowing the others: "stopped, press Play" would be false there.
+        const {rerender} = render(
+            <StopReasonBanner reason="AREA_START_BLOCKED" detail="Area 3" sessionActive={isSessionActive(2)}/>);
+        expect(screen.queryByTestId("stop-reason-banner")).not.toBeInTheDocument();
+
+        // Session over: IDLE (state 1), docked or not.
+        rerender(<StopReasonBanner reason="AREA_START_BLOCKED" detail="Area 3" sessionActive={isSessionActive(1)}/>);
+        expect(screen.getByTestId("stop-reason-banner")).toHaveTextContent(/own position is blocked/i);
     });
 
     it("still shows a code this GUI does not know", () => {
