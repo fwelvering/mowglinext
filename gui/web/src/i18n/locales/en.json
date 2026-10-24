@@ -1961,7 +1961,10 @@
   "mapOffsetPanel": {
     "mapOffset": "Map Offset",
     "mapRotation": "Map Rotation",
-    "resetToNorthUp": "Reset to north-up"
+    "resetToNorthUp": "Reset to north-up",
+    "lockRotation": "Lock map rotation",
+    "unlockRotation": "Unlock map rotation",
+    "rotationLockSaveError": "Failed to save the map rotation lock"
   },
   "mapEditArea": {
     "areaTypeMowing": "Mowing Area",
