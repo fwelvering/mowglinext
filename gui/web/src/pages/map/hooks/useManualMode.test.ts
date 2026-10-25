@@ -100,15 +100,83 @@ describe('useManualMode', () => {
         }, false);
     });
 
-    it('handleJoyStop sends zero velocity', () => {
-        const {result} = renderManualMode();
+    const ZERO_TWIST = {
+        header: {stamp: {sec: 0, nanosec: 0}, frame_id: ""},
+        twist: {linear: {x: 0, y: 0, z: 0}, angular: {z: 0, x: 0, y: 0}},
+    };
+    const joyEvent = (x: number, y: number) =>
+        ({type: 'move', x, y, direction: null, distance: null}) satisfies IJoystickUpdateEvent;
+    const sent = () => vi.mocked(sendJsonMessage).mock.calls;
+
+    async function renderDriving() {
+        const rendered = renderManualMode();
+        await act(async () => { await rendered.result.current.handleManualMode(); });
+        act(() => {
+            rendered.result.current.handleJoyStart();
+            rendered.result.current.handleJoyMove(joyEvent(0, 1));
+        });
+        vi.mocked(sendJsonMessage).mockClear();
+        return rendered;
+    }
+
+    it('handleJoyStop sends zero velocity after the release debounce', async () => {
+        const {result} = await renderDriving();
         act(() => {
             result.current.handleJoyStop();
         });
-        expect(sendJsonMessage).toHaveBeenCalledWith({
-            header: {stamp: {sec: 0, nanosec: 0}, frame_id: ""},
-            twist: {linear: {x: 0, y: 0, z: 0}, angular: {z: 0, x: 0, y: 0}},
-        }, false);
+        // Not yet: the stop is held so a spurious pointerup cannot brake the mower.
+        expect(sendJsonMessage).not.toHaveBeenCalledWith(ZERO_TWIST, false);
+        act(() => {
+            vi.advanceTimersByTime(150);
+        });
+        expect(sendJsonMessage).toHaveBeenCalledWith(ZERO_TWIST, false);
+    });
+
+    it('a stop immediately followed by a move never sends a zero and keeps the gesture', async () => {
+        const {result} = await renderDriving();
+        act(() => {
+            result.current.handleJoyStop();
+        });
+        act(() => {
+            vi.advanceTimersByTime(20);
+            result.current.handleJoyMove(joyEvent(0, 1));
+        });
+        act(() => {
+            vi.advanceTimersByTime(300);
+        });
+        expect(sendJsonMessage).not.toHaveBeenCalledWith(ZERO_TWIST, false);
+        // The keepalive kept re-sending the last non-zero twist.
+        const speeds = sent().map((call) => (call[0] as typeof ZERO_TWIST).twist.linear.x);
+        expect(speeds.length).toBeGreaterThan(3);
+        expect(speeds.every((x) => x > 0)).toBe(true);
+    });
+
+    it('a stop that is not followed by a move halts the keepalive after the debounce', async () => {
+        const {result} = await renderDriving();
+        act(() => {
+            result.current.handleJoyStop();
+            vi.advanceTimersByTime(150);
+        });
+        const sentAfterStop = sent().length;
+        act(() => {
+            vi.advanceTimersByTime(1000);
+        });
+        expect(sent().length).toBe(sentAfterStop);
+        expect(sent()[sent().length - 1]?.[0]).toEqual(ZERO_TWIST);
+    });
+
+    it('an explicit Stop neutralizes at once, without waiting for the debounce', async () => {
+        const {result} = await renderDriving();
+        act(() => {
+            result.current.handleJoyStop();
+            result.current.handleStopIntent();
+        });
+        expect(sendJsonMessage).toHaveBeenCalledWith(ZERO_TWIST, false);
+        const sentAfterStop = sent().length;
+        act(() => {
+            vi.advanceTimersByTime(1000);
+        });
+        expect(sent().length).toBe(sentAfterStop);
     });
 
     it('cleans up timers on unmount', async () => {

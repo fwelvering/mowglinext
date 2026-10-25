@@ -4621,7 +4621,10 @@ private:
   static constexpr double kImuPacketRateHz = 90.0;
   static constexpr int kImuDeadRepeatLogMs = 30000;
   ImuLivenessState imu_liveness_{};
-  rclcpp::Time imu_dead_last_log_{};
+  // Must be ROS time: it is subtracted from now(), and a default-constructed
+  // rclcpp::Time is RCL_SYSTEM_TIME, which makes that subtraction throw and
+  // kill the node the first time the IMU goes dead.
+  rclcpp::Time imu_dead_last_log_{0, 0, RCL_ROS_TIME};
 
   bool dock_pose_written_{false};
 };
