@@ -3,6 +3,17 @@ import type {TwistStamped} from "../../../types/ros.ts";
 import type {IJoystickUpdateEvent} from "react-joystick-component/build/lib/Joystick";
 
 const JOY_SEND_INTERVAL_MS = 100;
+// A joystick "stop" is held this long before motion is neutralized, and a
+// "move" in the meantime cancels it. On a phone the widget's stop (window
+// pointerup) fires spuriously mid-drag every second or so; forwarding it
+// straight away sent 0.25 -> 0 -> 0.25 within ~20 ms, the firmware braked on
+// every zero and re-accelerated under its ramp limit, and the mower drove in
+// stop-jerk-drive steps (field capture 2026-10-15). With the gesture model
+// below a spurious stop would even end the drive until a new pointer-down.
+// Well inside the firmware's 200 ms cmd_vel watchdog, so a genuine release
+// still stops within the same safety envelope: at most ~3 cm of extra coast at
+// 0.25 m/s. Mode changes, explicit Stop and unmount still neutralize at once.
+const JOY_STOP_DEBOUNCE_MS = 120;
 // Keep the existing UI latch through short telemetry blips. Motion itself is
 // invalidated immediately on a mode change and requires a new pointer gesture.
 const MANUAL_EXIT_DEBOUNCE_MS = 1200;
@@ -29,6 +40,7 @@ export function useManualMode({mowerAction, joyStream, stateName}: UseManualMode
     const exitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const lastTwistRef = useRef<TwistStamped | null>(null);
     const joyIntervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+    const joyStopTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const gestureRef = useRef(false);
     const gestureGenerationRef = useRef<number | undefined>(undefined);
     const stopBlockedRef = useRef(false);
@@ -39,7 +51,13 @@ export function useManualMode({mowerAction, joyStream, stateName}: UseManualMode
     const eligibleRef = useRef(false);
     const {sendJsonMessage, motionSession} = joyStream;
 
+    const cancelPendingJoyStop = useCallback(() => {
+        clearTimeout(joyStopTimerRef.current);
+        joyStopTimerRef.current = undefined;
+    }, []);
+
     const neutralizeMotion = useCallback(() => {
+        cancelPendingJoyStop();
         clearInterval(joyIntervalRef.current);
         joyIntervalRef.current = undefined;
         lastTwistRef.current = null;
@@ -48,7 +66,7 @@ export function useManualMode({mowerAction, joyStream, stateName}: UseManualMode
         // Best effort only: an unavailable socket cannot attest physical STOP.
         // Never queue a Twist for a later WebSocket reconnection.
         try { sendJsonMessage(neutralTwist(), false); } catch { /* stream unavailable */ }
-    }, [sendJsonMessage]);
+    }, [sendJsonMessage, cancelPendingJoyStop]);
 
     useLayoutEffect(() => {
         eligibleRef.current = stateName === "MANUAL_MOWING" || stateName === "RECORDING" ||
@@ -134,6 +152,9 @@ export function useManualMode({mowerAction, joyStream, stateName}: UseManualMode
     const handleJoyMove = useCallback((event: IJoystickUpdateEvent) => {
         if (!gestureRef.current) return;
         if (!gestureAllowed()) { neutralizeMotion(); return; }
+        // A move right after a (spurious) stop keeps the drive going: drop the
+        // pending neutral instead of braking.
+        cancelPendingJoyStop();
         const msg: TwistStamped = {
             header: {stamp: {sec: 0, nanosec: 0}, frame_id: ""},
             twist: {
@@ -151,9 +172,15 @@ export function useManualMode({mowerAction, joyStream, stateName}: UseManualMode
                 }
             }, JOY_SEND_INTERVAL_MS);
         }
-    }, [gestureAllowed, neutralizeMotion, sendJsonMessage]);
+    }, [gestureAllowed, neutralizeMotion, sendJsonMessage, cancelPendingJoyStop]);
 
-    const handleJoyStop = useCallback(() => neutralizeMotion(), [neutralizeMotion]);
+    const handleJoyStop = useCallback(() => {
+        if (joyStopTimerRef.current !== undefined) return; // a stop is already pending
+        joyStopTimerRef.current = setTimeout(() => {
+            joyStopTimerRef.current = undefined;
+            neutralizeMotion();
+        }, JOY_STOP_DEBOUNCE_MS);
+    }, [neutralizeMotion]);
 
     return {manualMode, handleManualMode, handleStopManualMode, handleStopIntent, handleJoyStart, handleJoyMove, handleJoyStop};
 }
