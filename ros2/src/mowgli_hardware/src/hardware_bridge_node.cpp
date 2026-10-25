@@ -2535,12 +2535,12 @@ private:
   // force-zero) — see odometry_publisher.hpp for the full rationale (task
   // #11 god-node breakup; verbatim port, this method only decodes now).
   //
-  // The PREVIOUS protocol's (v8) 17-byte packet is decoded too, but only from a
-  // board whose handshake declared that protocol: during an update-first
+  // The PREVIOUS protocols' (v7, v8) 17-byte packet is decoded too, but only
+  // from a board whose handshake declared one of them: during an update-first
   // transition (docs/UPDATES.md) the new host runs against the old firmware
   // until the operator flashes it from the new GUI, and the updater's readiness
   // check needs live /wheel_odom (stationary proof) to accept that state. This
-  // is telemetry only — fw_compatible_ stays false on a v8 board, so
+  // is telemetry only — fw_compatible_ stays false on a v7/v8 board, so
   // PreFlightCheck keeps mowing blocked (see legacy_odometry.hpp).
   void handle_odometry(const uint8_t* data, std::size_t len)
   {
@@ -2555,15 +2555,15 @@ private:
         return;
       }
       case OdometryWireFormat::kLegacyV8:
-        if (fw_protocol_version_ != kLegacyOdometryProtocolVersion)
+        if (!board_sends_legacy_odometry(fw_protocol_version_))
         {
           RCLCPP_WARN_THROTTLE(get_logger(),
                                *get_clock(),
                                5000,
-                               "Dropping %zu-byte protocol v%u odometry: the board has not "
-                               "declared protocol v%u (handshake reports v%u).",
+                               "Dropping %zu-byte protocol v%u-v%u odometry: the board has not "
+                               "declared one of those protocols (handshake reports v%u).",
                                len,
-                               static_cast<unsigned>(kLegacyOdometryProtocolVersion),
+                               static_cast<unsigned>(kOldestLegacyOdometryProtocolVersion),
                                static_cast<unsigned>(kLegacyOdometryProtocolVersion),
                                static_cast<unsigned>(fw_protocol_version_));
           return;
@@ -2577,7 +2577,7 @@ private:
                                "Decoding protocol v%u odometry from firmware v%s for telemetry "
                                "only. Flash the protocol v%u firmware from the GUI; mowing stays "
                                "blocked until then.",
-                               static_cast<unsigned>(kLegacyOdometryProtocolVersion),
+                               static_cast<unsigned>(fw_protocol_version_),
                                fw_version_str_.c_str(),
                                static_cast<unsigned>(kMowgliProtocolVersion));
           note_odometry(pkt.left_velocity_mm_s, pkt.right_velocity_mm_s);

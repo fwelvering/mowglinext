@@ -61,6 +61,18 @@ TEST(LegacyOdometryTest, ClassifiesByExactLength)
   EXPECT_EQ(classify_odometry_packet(0u), OdometryWireFormat::kInvalid);
 }
 
+TEST(LegacyOdometryTest, AcceptsTheLegacyLayoutFromEveryPublishedPreviousProtocol)
+{
+  // v1.5.0 shipped protocol v7, whose odometry is byte-identical to v8. A
+  // v1.5.0 robot updating straight to this release must keep /wheel_odom
+  // alive, or the update-first readiness starves and the update rolls back.
+  EXPECT_TRUE(board_sends_legacy_odometry(7u));
+  EXPECT_TRUE(board_sends_legacy_odometry(8u));
+  EXPECT_FALSE(board_sends_legacy_odometry(0u));  // no handshake yet
+  EXPECT_FALSE(board_sends_legacy_odometry(6u));
+  EXPECT_FALSE(board_sends_legacy_odometry(kMowgliProtocolVersion));
+}
+
 TEST(LegacyOdometryTest, AccumulatesDtIntoMonotonicAcquisitionClock)
 {
   LegacyOdometryDecoder d;

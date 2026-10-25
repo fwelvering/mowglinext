@@ -273,6 +273,10 @@ Checklist for every future protocol bump (host side):
   status, odometry), keep the PREVIOUS protocol's layout decodable for one
   version (move the old struct to a `Ll*V<N>` legacy decoder, dispatch on the
   exact length, accept it only from a board that declared protocol N).
+  "One version" means back to the protocol of the **last published release**,
+  not just the previous dev bump: v1.5.0 shipped v7 while dev went v8 → v9, so
+  the v9 host accepts the identical 17-byte odometry from v7 and v8 boards
+  (`kOldestLegacyOdometryProtocolVersion`).
 - Never let a legacy decoder set `firmware_compatible` or relax any motion,
   blade or parameter-store gate — it exists only so the update-first window
   can prove idle, stationary and blade-off.
