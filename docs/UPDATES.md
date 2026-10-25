@@ -79,11 +79,25 @@ service or container orchestrator is needed on the mower.
 
 Raspberry Pi OS 64-bit, Ubuntu and Debian retain their existing architecture
 support. Automatic installation requires the standard installer Compose layout,
-host networking and the Mowgli mainboard readiness interface. ARM32, Windows,
+host networking and the mower readiness interface. ARM32, Windows,
 macOS, rootless Docker, Podman and non-systemd installations are not supported by
 this updater. Version reporting and manual image comparison remain available
-when the host service is absent. MAVROS/other hardware backends without Mowgli
-firmware readiness cannot pass the automatic installation gate.
+when the host service is absent. The Mowgli mainboard and the OpenMower v1
+bridge (`HARDWARE_BACKEND=openmower`) are covered; MAVROS cannot pass the
+automatic installation gate.
+
+**OpenMower v1.** The release bundle's `backend` group adds
+`docker-compose.openmower.yml` and the release publishes the `openmower` image
+next to the others. The worker reads `HARDWARE_BACKEND` from `docker/.env` on
+every installer run (never from an earlier selection, so a robot moved back to
+the Mowgli board drops the bridge). The OpenMower bridge talks to the stock
+LowLevel and xESC firmware and reports firmware protocol 0, so the release's
+`firmware_protocol` (the Mowgli STM32 wire protocol) is waived there — decided
+from the host's `docker/.env`, not from the GUI. The GUI's readiness verdict
+reads the same file (its container gets no `HARDWARE_BACKEND`). Everything else in the
+readiness gate still applies: fresh, idle, stationary, blade-off telemetry, and
+`firmware_compatible` (the bridge reaches the LowLevel board and both drive
+ESCs).
 
 ## First installation or adoption
 
@@ -239,6 +253,39 @@ rollback started before the board was flashed, in which the previous images
 meet the same refusal from the other side. After a successful forced install
 the GUI shows a persistent "flash the mainboard firmware now" alert (Firmware
 section, ST-Link) until the board reports the new protocol.
+
+**The new host must keep the previous protocol's telemetry decodable.** The
+exception above only works if `maintenance_ready` can actually be proven
+while the new host talks to the OLD firmware — and that needs live wheel
+odometry (the stationary proof). Protocol v9 grew the odometry packet
+(17 → 19 bytes); the first v9 host dropped every v8 packet, `/wheel_odom`
+went silent, readiness reported *"Fresh firmware, behaviour and wheel
+telemetry required"* and every update-first install from v8 firmware rolled
+back (field, 2026-10-25), stranding the operator on the GUI that cannot flash
+v9. The bridge now decodes the v8 odometry layout too
+(`mowgli_hardware/legacy_odometry.hpp`), only from a board whose handshake
+declared v8, for telemetry only — `firmware_compatible` stays false and
+mowing stays blocked until the firmware is flashed.
+
+Checklist for every future protocol bump (host side):
+
+- If a packet the readiness verdict depends on changes shape (status, blade
+  status, odometry), keep the PREVIOUS protocol's layout decodable for one
+  version (move the old struct to a `Ll*V<N>` legacy decoder, dispatch on the
+  exact length, accept it only from a board that declared protocol N).
+  "One version" means back to the protocol of the **last published release**,
+  not just the previous dev bump: v1.5.0 shipped v7 while dev went v8 → v9, so
+  the v9 host accepts the identical 17-byte odometry from v7 and v8 boards
+  (`kOldestLegacyOdometryProtocolVersion`).
+- Never let a legacy decoder set `firmware_compatible` or relax any motion,
+  blade or parameter-store gate — it exists only so the update-first window
+  can prove idle, stationary and blade-off.
+- Drop the previous legacy decoder when adding the new one
+  (`kLegacyOdometryProtocolVersion + 1 == kMowgliProtocolVersion` is a
+  `static_assert`, so the bump cannot be forgotten).
+- Hardware acceptance: from the previous firmware, install the new release with
+  "install anyway" and expect a successful verification (not a rollback), then
+  flash from the new GUI.
 
 ## Installed stack, health and component versions
 
@@ -464,7 +511,10 @@ container with an existing health contract.
 
 Persistent services need more care: additional managed services may write only existing writable mounts at the
 already supported data destinations (`/db`, `/mowgli_config`, `/ros2_ws/maps`,
-`/ros2_ws/config`), which are archived and restored. Other writable mounts reject
+`/ros2_ws/config`), which are archived and restored. The host device tree
+(`/dev:/dev`, or a node under it, which every hardware sidecar binds for its
+serial ports) holds no data and needs no backup, so it is accepted too, also
+when a robot gains the sidecar (`isDeviceMount`). Other writable mounts reject
 the plan. Container writable layers are disposable. Unmanaged containers must not
 write shared managed data. New persistence or application-health contracts require
 an explicit updater implementation and recovery tests; labels are not arbitrary
@@ -568,6 +618,21 @@ sudo mowgli-updater recover
 sudo journalctl -u mowgli-updater.service -n 100
 ```
 
+### The release's updater runs first
+
+The installed worker is the one that checks a release, so a check it gets
+wrong would block the very release that fixes it (2026-10-10: OpenMower robots
+refused every update over their `/dev` mount until the updater was updated by
+hand). **Review** in Settings → Updates therefore first installs the target
+release's worker when it ships a different build (`POST /v1/agent-update`),
+waits up to 120 s for it to answer, then plans the update with it
+(`gui/web/src/utils/updaterAgent.ts`). It only moves forward: a target
+published before the running worker's own release keeps the running worker,
+because an older worker may not read the newer journal. The launcher keeps the
+previous worker if the new one fails its health probe; the GUI then shows that
+reason and plans nothing. The manual "Update the update service" action stays
+in advanced mode for choosing another worker.
+
 ### Manual update without the host updater
 
 `install/mowglinext.sh update` (see the wiki's Getting Started) is the
@@ -659,7 +724,8 @@ restoring only an older executable is unsafe.
 
 Fresh MAVROS, TF-Luna or VESC configurations use the existing installer path and
 keep their selected containers. They are not silently enrolled into coordinated
-updates: the current release selector covers the Mowgli backend, GNSS and LiDAR.
+updates: the current release selector covers the Mowgli and OpenMower v1
+backends, GNSS and LiDAR.
 An already managed installation rejects these unsupported selections before
 regenerating runtime files. These integrations need explicit release/health/storage
 contracts before they can participate in coordinated updates.
