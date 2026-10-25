@@ -611,6 +611,14 @@ struct BTContext
   /// completion, loaded once at node startup, and removed by EndSession. See
   /// coverage_persistence.{hpp,cpp}.
   std::string coverage_resume_path;
+  /// Wall-clock time the snapshot at coverage_resume_path was written (its `saved_at` row),
+  /// filled by loadCoverageResumeState. It is the AGE of restored progress: kept progress older
+  /// than kIncompleteResumeMaxAge is discarded at boot (applyRestoredCommandPolicy) exactly as a
+  /// live process ages it out at the next Play. Field 2026-10-25: without it, three updater
+  /// restarts turned a 6-day-old "4 of 5 sub-paths done" snapshot into a mow that drove the one
+  /// ring unit left and declared the lawn complete. Absent in files written before this row
+  /// (unknown age, resumed as before).
+  std::optional<std::chrono::system_clock::time_point> coverage_resume_saved_at;
   bool mow_cross_hatch{false};
   std::map<uint32_t, CrossHatch> cross_hatch;
   // Disabled sessions still latch their base orientation for resume, but do not
@@ -1154,6 +1162,17 @@ inline bool incompleteResumeExpired(std::chrono::steady_clock::time_point kept_a
                                     std::chrono::steady_clock::time_point now)
 {
   return now - kept_at > kIncompleteResumeMaxAge;
+}
+
+/// The same question for progress RESTORED from disk at boot, whose age is only known on the
+/// wall clock (BTContext::coverage_resume_saved_at): a steady clock does not survive a restart.
+/// A clock that went backwards since the save reads as a negative age, i.e. not expired — the Pi
+/// has no RTC but systemd restores the last known time, so the wall clock never runs behind a
+/// save made by this robot.
+inline bool restoredProgressExpired(std::chrono::system_clock::time_point saved_at,
+                                    std::chrono::system_clock::time_point now)
+{
+  return now - saved_at > kIncompleteResumeMaxAge;
 }
 
 /// Should a plain COMMAND_START received while the tree publishes `state_name`
