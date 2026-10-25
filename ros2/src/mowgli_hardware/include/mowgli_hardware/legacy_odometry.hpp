@@ -1,7 +1,7 @@
 // Copyright 2026 Mowgli Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Decoder for the PREVIOUS mainboard protocol's (v8) odometry packet.
+// Decoder for the PREVIOUS mainboard protocols' (v7, v8) odometry packet.
 // Pure logic, no ROS, so it is unit-testable standalone
 // (see test_legacy_odometry.cpp).
 //
@@ -53,9 +53,27 @@ static_assert(kLegacyOdometryProtocolVersion + 1u == kMowgliProtocolVersion,
               "legacy odometry must describe the protocol directly before the current one; "
               "update LlOdometryV8 (or drop it) when bumping the protocol");
 
+/// The OLDEST protocol that sends the same 17-byte layout. v7 is what v1.5.0
+/// shipped; v8 only added the parameter-log reset packet (0x5B) and left every
+/// other packet byte-identical. "One version back" is not enough: a robot on
+/// the last PUBLISHED release updates straight to this one, so its odometry
+/// must stay decodable too, or its readiness starves and the update rolls back
+/// exactly like the v8 -> v9 field failure above.
+static constexpr uint8_t kOldestLegacyOdometryProtocolVersion = 7u;
+static_assert(kOldestLegacyOdometryProtocolVersion <= kLegacyOdometryProtocolVersion,
+              "the oldest legacy odometry protocol cannot be newer than the legacy one");
+
+/// True when a board whose handshake declared @p board_protocol sends the
+/// legacy 17-byte LlOdometryV8 layout. Telemetry only — see above.
+[[nodiscard]] constexpr bool board_sends_legacy_odometry(uint32_t board_protocol) noexcept
+{
+  return board_protocol >= kOldestLegacyOdometryProtocolVersion &&
+         board_protocol <= kLegacyOdometryProtocolVersion;
+}
+
 #pragma pack(push, 1)
 
-/// Protocol v8 odometry packet (PACKET_ID_LL_ODOMETRY, 17 bytes on the wire).
+/// Protocol v7/v8 odometry packet (PACKET_ID_LL_ODOMETRY, 17 bytes on the wire).
 struct LlOdometryV8
 {
   uint8_t type;  ///< Must equal PACKET_ID_LL_ODOMETRY
