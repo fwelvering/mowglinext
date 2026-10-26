@@ -730,6 +730,15 @@ protected:
                                  {BT::InputPort<double>("distance_m"),
                                   BT::InputPort<double>("speed_ms"),
                                   BT::InputPort<double>("timeout_sec")});
+    // The fork's LiDAR motor spin-down wait (UndockOrSkip) is not under test here: the motor is
+    // ready.
+    factory.registerSimpleAction("WaitForLidarMotorReady",
+                                 [](BT::TreeNode&)
+                                 {
+                                   return BT::NodeStatus::SUCCESS;
+                                 },
+                                 {BT::InputPort<bool>("enabled"),
+                                  BT::InputPort<double>("timeout_sec")});
     factory.registerSimpleAction("RemainingUndockDistance",
                                  [](BT::TreeNode&)
                                  {
