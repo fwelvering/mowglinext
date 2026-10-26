@@ -15,7 +15,9 @@
 #include "mowgli_hardware/packet_handler.hpp"
 #include <gtest/gtest.h>
 
+using mowgli_hardware::board_sends_legacy_odometry;
 using mowgli_hardware::classify_odometry_packet;
+using mowgli_hardware::kMowgliProtocolVersion;
 using mowgli_hardware::LegacyOdometryDecoder;
 using mowgli_hardware::LlOdometry;
 using mowgli_hardware::LlOdometryV8;
