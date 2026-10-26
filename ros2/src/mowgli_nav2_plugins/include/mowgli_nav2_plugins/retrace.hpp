@@ -37,6 +37,8 @@ struct Limits
   double min_step_m{0.02};
   /// How much driven path is kept (older breadcrumbs are discarded).
   double history_m{3.0};
+  /// Two consecutive poses further apart than this are a discontinuity, not driving.
+  double max_jump_m{0.5};
   /// A retrace shorter than this is not worth a manoeuvre (and its direction is too noisy to
   /// trust).
   double min_distance_m{0.08};
@@ -82,6 +84,10 @@ public:
 
   void add(const Pose2D& pose)
   {
+    // A jump is not driving (the mower was carried, the pose was re-anchored): what came before it
+    // says nothing about the ground behind the robot now.
+    if (!crumbs_.empty() && dist(crumbs_.back(), pose) > limits_.max_jump_m)
+      crumbs_.clear();
     if (!crumbs_.empty() && dist(crumbs_.back(), pose) < limits_.min_step_m)
       return;
     crumbs_.push_back(pose);

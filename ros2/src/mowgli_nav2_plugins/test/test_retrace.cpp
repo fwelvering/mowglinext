@@ -136,3 +136,14 @@ TEST(Retrace, ProgressIsMeasuredAlongTheRetraceDirection)
               0.0,
               1e-9);
 }
+
+TEST(Retrace, AJumpInThePoseIsNotDriving)
+{
+  Breadcrumbs crumbs;
+  driveX(crumbs, 0.0, 1.0, 0.0);
+  // The mower is carried 3 m away and set down: the old track says nothing about the ground
+  // behind it now, so the history starts over and a reverse has nothing to undo.
+  crumbs.add({4.0, 0.0, 0.0});
+  EXPECT_EQ(crumbs.size(), 1U);
+  EXPECT_EQ(crumbs.plan({4.0, 0.0, 0.0}, 0.30).refusal, Refusal::kNoHistory);
+}

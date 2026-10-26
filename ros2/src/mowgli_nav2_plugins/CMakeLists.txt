@@ -21,6 +21,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(nav2_core REQUIRED)
 find_package(nav2_costmap_2d REQUIRED)
 find_package(nav2_util REQUIRED)
@@ -79,6 +80,7 @@ target_link_libraries(${PROJECT_NAME}
   ${nav2_msgs_TARGETS}
   ${std_srvs_TARGETS}
   ${geometry_msgs_TARGETS}
+  ${std_msgs_TARGETS}
   ${pluginlib_TARGETS}
   ${tf2_TARGETS}
   ${tf2_ros_TARGETS}
