@@ -86,6 +86,9 @@ struct BTContext
   std::chrono::steady_clock::time_point last_status_time{};
   mowgli_interfaces::msg::Emergency latest_emergency;
   mowgli_interfaces::msg::Power latest_power;
+  /// Startup barrier: set only after live power has supplied a usable battery
+  /// reading and restored charging intent has been reconciled. Never persisted.
+  bool power_sample_received{false};
 
   /// Timestamp of the last emergency message received.
   std::chrono::steady_clock::time_point last_emergency_time{std::chrono::steady_clock::now()};
@@ -214,17 +217,27 @@ struct BTContext
   /// context_mutex.
   bool critical_charge_stop_latched{false};
 
+  /// Battery-driven charge waits survive guard halts and process restarts.
+  /// Both low and critical holds re-enter the shared critical recovery branch.
+  bool battery_charge_pending{false};
+
+  /// After restoring an active mow, inspect the first power sample. An old
+  /// snapshot may predate battery_charge_pending, but booting on the charger
+  /// must still complete charging before resuming the saved mission.
+  bool restored_mow_charge_check_pending{false};
+
   /// Outcome of the most recent DockRobot attempt. Reset when an action starts
-  /// and set only after its action result reports success. Used by the
+  /// and set after its action result or physical charger contact reports success. Used by the
   /// critical-battery tree to avoid treating a failed navigation attempt as
   /// arrival at the charger.
   bool last_dock_succeeded{false};
 
   /// Latches a failed critical-battery dock attempt. The mower stays stopped
-  /// until an operator sends a new command, rather than retrying at BT rate.
+  /// until a new operator command or physical charger contact resolves it,
+  /// rather than retrying at BT rate.
   bool critical_dock_failure_latched{false};
 
-  /// Set by LatchCriticalDockFailure and consumed by the node after the current
+  /// Set by battery recovery state transitions and consumed after the current
   /// tree tick, so persistence remains serialized with coverage-map access.
   bool critical_dock_failure_persistence_requested{false};
 
@@ -598,6 +611,14 @@ struct BTContext
   /// completion, loaded once at node startup, and removed by EndSession. See
   /// coverage_persistence.{hpp,cpp}.
   std::string coverage_resume_path;
+  /// Wall-clock time the snapshot at coverage_resume_path was written (its `saved_at` row),
+  /// filled by loadCoverageResumeState. It is the AGE of restored progress: kept progress older
+  /// than kIncompleteResumeMaxAge is discarded at boot (applyRestoredCommandPolicy) exactly as a
+  /// live process ages it out at the next Play. Field 2026-10-25: without it, three updater
+  /// restarts turned a 6-day-old "4 of 5 sub-paths done" snapshot into a mow that drove the one
+  /// ring unit left and declared the lawn complete. Absent in files written before this row
+  /// (unknown age, resumed as before).
+  std::optional<std::chrono::system_clock::time_point> coverage_resume_saved_at;
   bool mow_cross_hatch{false};
   std::map<uint32_t, CrossHatch> cross_hatch;
   // Disabled sessions still latch their base orientation for resume, but do not
@@ -1163,6 +1184,17 @@ inline bool incompleteResumeExpired(std::chrono::steady_clock::time_point kept_a
                                     std::chrono::steady_clock::time_point now)
 {
   return now - kept_at > kIncompleteResumeMaxAge;
+}
+
+/// The same question for progress RESTORED from disk at boot, whose age is only known on the
+/// wall clock (BTContext::coverage_resume_saved_at): a steady clock does not survive a restart.
+/// A clock that went backwards since the save reads as a negative age, i.e. not expired — the Pi
+/// has no RTC but systemd restores the last known time, so the wall clock never runs behind a
+/// save made by this robot.
+inline bool restoredProgressExpired(std::chrono::system_clock::time_point saved_at,
+                                    std::chrono::system_clock::time_point now)
+{
+  return now - saved_at > kIncompleteResumeMaxAge;
 }
 
 /// Should a plain COMMAND_START received while the tree publishes `state_name`
