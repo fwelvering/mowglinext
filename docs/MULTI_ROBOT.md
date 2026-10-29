@@ -172,7 +172,9 @@ goes stale. Nav2 then treats a peer like any obstacle:
   global-lethal cells as non-obstacles; that mask is gone (root CLAUDE.md
   Invariant 5). The LiDAR itself also sees the other body, so collision_monitor
   keeps its scan source only.
-- No-LiDAR overlay: a `fleet_layer` (`ObstacleLayer` under a distinct name) in
+- No-LiDAR overlay: a `fleet_layer` (`mowgli_nav2_plugins::RecentObstacleLayer`
+  under a distinct name, rebuilt from the last second of clouds every update —
+  a plain `ObstacleLayer` with no scan to raytrace never forgot a mark) in
   BOTH costmaps, and — new — the consumers are ON like in the LiDAR variant:
   FTC `check_obstacles` + `enable_obstacle_deviation`, RPP
   `use_collision_detection`, and a collision_monitor whose only source is the
