@@ -958,27 +958,9 @@
                   <SetBatteryChargePending pending="true"/>
                   <PublishHighLevelStatus state="2" state_name="LOW_BATTERY_DOCKING"/>
                   <ClearCostmap/>
-                  <!-- Three docking attempts before giving up. A single failed
-                       DockRobot used to fail BatteryGuard, i.e. the whole
-                       StripGuards sequence, so the tree reported
-                       COVERAGE_FAILED_DOCKING for what was a low-battery return
-                       — on a large lawn the long trip home is the transit most
-                       likely to fail once (a plan over the whole garden, the
-                       global costmap still rebuilding after ClearCostmap).
-                       Between attempts: clear the costmaps again and wait 5 s.
-                       ConfirmChargingDock stays the first, reactive child, so
-                       reaching the charger at any point ends the retry. -->
                   <ReactiveFallback name="LowBatteryDockOrCharging">
                     <ConfirmChargingDock/>
-                    <RetryUntilSuccessful name="LowBatteryDockRetry" num_attempts="3">
-                      <Fallback>
-                        <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
-                        <Sequence>
-                          <ClearCostmap/>
-                          <Inverter><WaitForDuration duration_sec="5.0"/></Inverter>
-                        </Sequence>
-                      </Fallback>
-                    </RetryUntilSuccessful>
+                    <DockRobot dock_id="home_dock" dock_type="simple_charging_dock"/>
                   </ReactiveFallback>
                   <PublishHighLevelStatus state="1" state_name="CHARGING"/>
                   <!-- Charge hold until battery_full_pct AND the charge current
