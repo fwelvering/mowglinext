@@ -1089,6 +1089,16 @@ bool FollowStrip::sendCurrentSwath(const std::shared_ptr<BTContext>& ctx)
         slot->error_msg = r.result->error_msg;
       }
     };
+    // The planned route sizes the watchdog (transitDeadlineForRouteSec). A fresh
+    // slot per goal: late feedback of an earlier transit must not widen this one.
+    transit_route_ = std::make_shared<TransitRouteSlot>();
+    send_opts.feedback_callback =
+        [route = transit_route_](NavGoalHandle::SharedPtr,
+                                 const std::shared_ptr<const Nav2Navigate::Feedback> feedback)
+    {
+      if (feedback)
+        route->Record(feedback->distance_remaining);
+    };
     nav_goal.behavior_tree = ctx->transit_tree_xml;
     nav_future_ = nav_client_->async_send_goal(nav_goal, send_opts);
     transit_active_ = true;
@@ -1506,6 +1516,7 @@ BT::NodeStatus FollowStrip::onRunning()
         nav_status != action_msgs::msg::GoalStatus::STATUS_ABORTED &&
         nav_status != action_msgs::msg::GoalStatus::STATUS_CANCELED)
     {
+      widenTransitDeadline(ctx);
       const double elapsed =
           std::chrono::duration<double>(std::chrono::steady_clock::now() - transit_start_time_)
               .count();
@@ -2019,8 +2030,25 @@ bool FollowStrip::stepScanPause(const std::shared_ptr<BTContext>& ctx, bool allo
 void FollowStrip::armTransitWatchdog(double gap_m)
 {
   transit_start_time_ = std::chrono::steady_clock::now();
+  transit_gap_m_ = gap_m;
   transit_deadline_s_ = transitDeadlineSec(gap_m);
   transit_timeout_requested_ = false;
+}
+
+void FollowStrip::widenTransitDeadline(const std::shared_ptr<BTContext>& ctx)
+{
+  const double route_m = transit_route_ ? transit_route_->Longest() : 0.0;
+  const double bound = transitDeadlineForRouteSec(transit_gap_m_, route_m);
+  // Only a widening worth a log line (route replans jitter by centimetres).
+  if (bound < transit_deadline_s_ + kTransitBoundLogStepSec)
+    return;
+  RCLCPP_INFO(ctx->node->get_logger(),
+              "FollowStrip: transit route is %.1fm for a %.1fm gap — bound %.0fs -> %.0fs",
+              route_m,
+              transit_gap_m_,
+              transit_deadline_s_,
+              bound);
+  transit_deadline_s_ = bound;
 }
 
 void FollowStrip::setBladeEnabled(bool enabled)
@@ -2659,7 +2687,9 @@ BT::NodeStatus TransitToStrip::onStart()
   }
   double timeout_s = -1.0;
   getInput<double>("timeout_sec", timeout_s);
-  deadline_s_ = timeout_s > 0.0 ? timeout_s : transitDeadlineSec(gap_m);
+  deadline_follows_route_ = timeout_s <= 0.0;
+  gap_m_ = gap_m;
+  deadline_s_ = deadline_follows_route_ ? transitDeadlineSec(gap_m) : timeout_s;
   start_time_ = std::chrono::steady_clock::now();
   timeout_requested_ = false;
   failure_seen_ = false;
@@ -2686,6 +2716,15 @@ BT::NodeStatus TransitToStrip::onStart()
       result_slot->error_code = result.result->error_code;
       result_slot->error_msg = result.result->error_msg;
     }
+  };
+  // The planned route sizes the bound, as in FollowStrip (transitDeadlineForRouteSec).
+  nav_route_ = std::make_shared<TransitRouteSlot>();
+  send_opts.feedback_callback =
+      [route = nav_route_](NavGoalHandle::SharedPtr,
+                           const std::shared_ptr<const Nav2Navigate::Feedback> feedback)
+  {
+    if (feedback)
+      route->Record(feedback->distance_remaining);
   };
   nav_future_ = nav_client_->async_send_goal(goal, send_opts);
 
@@ -2806,6 +2845,21 @@ void TransitToStrip::enforceDeadline(const std::shared_ptr<BTContext>& ctx)
   if (timeout_requested_ || deadline_s_ <= 0.0)
   {
     return;
+  }
+  if (deadline_follows_route_)
+  {
+    const double route_m = nav_route_ ? nav_route_->Longest() : 0.0;
+    const double bound = transitDeadlineForRouteSec(gap_m_, route_m);
+    if (bound >= deadline_s_ + kTransitBoundLogStepSec)
+    {
+      RCLCPP_INFO(ctx->node->get_logger(),
+                  "TransitToStrip: route is %.1fm for a %.1fm gap — bound %.0fs -> %.0fs",
+                  route_m,
+                  gap_m_,
+                  deadline_s_,
+                  bound);
+      deadline_s_ = bound;
+    }
   }
   const double elapsed =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time_).count();
