@@ -1286,6 +1286,10 @@
     "readinessCtaDrawArea": "Dessiner une zone"
   },
   "settingsPage": {
+    "leaveTitle": "Quitter sans enregistrer ?",
+    "leaveBody": "Vos réglages non enregistrés seront perdus. Restez sur cette page pour les enregistrer.",
+    "discardAndLeave": "Ignorer et quitter",
+    "keepEditing": "Continuer la modification",
     "ros2Restarting": "Redémarrage ROS2…",
     "ros2Restarted": "ROS2 redémarré",
     "ros2RestartFailed": "Échec du redémarrage ROS2",
