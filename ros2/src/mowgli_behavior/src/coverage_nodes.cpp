@@ -25,6 +25,7 @@
 
 #include "action_msgs/msg/goal_status.hpp"
 #include "mowgli_behavior/area_coverage_lines.hpp"
+#include "mowgli_behavior/area_progress.hpp"
 #include "mowgli_behavior/blocked_stretch.hpp"
 #include "mowgli_behavior/cancel_goal.hpp"
 #include "mowgli_behavior/coverage_persistence.hpp"
@@ -3444,6 +3445,7 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
     ctx->base_orientation_areas.erase(current_area_idx_);
     ctx->area_attempt_count.erase(current_area_idx_);
     ctx->area_last_coverage.erase(current_area_idx_);
+    ctx->area_last_partial_poses.erase(current_area_idx_);
     ctx->area_start_blocked_count.erase(current_area_idx_);
     ctx->area_guard_halt_count.erase(current_area_idx_);
     // These three are per-index too, and leaving them behind outlives the
@@ -3570,6 +3572,8 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   // the size of ctx->area_completed_swaths[area] — if it grew since the last
   // dispatch, the previous FollowStrip pass mowed at least one more swath, so
   // reset the counter. This replaces the old cell-coverage-percent high-water.
+  // A pass that got far into an UNFINISHED unit counts too (area_progress.hpp):
+  // a large area drawn with few points has only a few very long units.
   std::size_t done_swaths = 0;
   {
     auto it = ctx->area_completed_swaths.find(current_area_idx_);
@@ -3661,12 +3665,38 @@ BT::NodeStatus GetNextUnmowedArea::processResponse()
   }
 
   auto& n = ctx->area_attempt_count[current_area_idx_];
-  auto last_it = ctx->area_last_coverage.find(current_area_idx_);
-  const bool made_progress = (last_it == ctx->area_last_coverage.end()) ||
-                             (static_cast<float>(done_swaths) > last_it->second + 0.5f);
+  const auto unit_progress_it = ctx->area_unit_progress.find(current_area_idx_);
+  const AreaProgressMark now_mark{done_swaths,
+                                  partialUnitPoses(unit_progress_it != ctx->area_unit_progress.end()
+                                                       ? &unit_progress_it->second
+                                                       : nullptr)};
+  std::optional<AreaProgressMark> last_mark;
+  if (const auto last_it = ctx->area_last_coverage.find(current_area_idx_);
+      last_it != ctx->area_last_coverage.end())
+  {
+    const auto partial_it = ctx->area_last_partial_poses.find(current_area_idx_);
+    last_mark =
+        AreaProgressMark{static_cast<std::size_t>(std::lround(last_it->second)),
+                         partial_it != ctx->area_last_partial_poses.end() ? partial_it->second : 0};
+  }
+  const auto total_it = ctx->area_path_pose_count.find(current_area_idx_);
+  const std::size_t min_partial_gain =
+      minPartialProgressPoses(total_it != ctx->area_path_pose_count.end() ? total_it->second : 0,
+                              BTContext::kAreaProgressEpsilonPct);
+  const bool made_progress = areaPassMadeProgress(last_mark, now_mark, min_partial_gain);
   if (made_progress)
   {
+    if (last_mark && now_mark.done_units == last_mark->done_units)
+    {
+      RCLCPP_INFO(ctx->node->get_logger(),
+                  "GetNextUnmowedArea: area %u — no unit finished, but the last pass got %zu poses "
+                  "further into unfinished ones (>= %zu): counts as progress",
+                  current_area_idx_,
+                  now_mark.partial_poses - last_mark->partial_poses,
+                  min_partial_gain);
+    }
     ctx->area_last_coverage[current_area_idx_] = static_cast<float>(done_swaths);
+    ctx->area_last_partial_poses[current_area_idx_] = now_mark.partial_poses;
     n = 0;
   }
   n++;
