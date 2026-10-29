@@ -587,4 +587,28 @@ TEST(GuardFallthroughTest, InitialPowerGuardPrecedesEveryRootMotionHandler)
   EXPECT_NE(block.find("<AlwaysFailure/>"), std::string::npos);
 }
 
+// A low-battery return that failed ONCE used to fail BatteryGuard — the whole
+// StripGuards sequence — and the tree reported COVERAGE_FAILED_DOCKING for a
+// routine trip home. DockRobot is retried inside the reactive fallback, and
+// ConfirmChargingDock stays its first child so reaching the charger at any
+// point (mid-attempt or mid-wait) ends the retry.
+TEST(GuardFallthroughTest, LowBatteryDockIsRetriedBeforeTheGuardFails)
+{
+  const std::string block = ExtractGuardBlock(ReadMainTree(), "BatteryGuard");
+  ASSERT_FALSE(block.empty());
+  const std::size_t fallback = block.find("<ReactiveFallback name=\"LowBatteryDockOrCharging\">");
+  ASSERT_NE(fallback, std::string::npos);
+  const std::size_t end = block.find("</ReactiveFallback>", fallback);
+  const std::size_t confirm = block.find("<ConfirmChargingDock/>", fallback);
+  const std::size_t retry =
+      block.find("<RetryUntilSuccessful name=\"LowBatteryDockRetry\" num_attempts=\"3\">",
+                 fallback);
+  const std::size_t dock = block.find("<DockRobot ", fallback);
+  ASSERT_NE(end, std::string::npos);
+  ASSERT_NE(retry, std::string::npos) << "the low-battery DockRobot is no longer retried";
+  EXPECT_LT(confirm, retry) << "ConfirmChargingDock must stay the first, reactive child";
+  EXPECT_LT(retry, dock);
+  EXPECT_LT(dock, end);
+}
+
 }  // namespace
