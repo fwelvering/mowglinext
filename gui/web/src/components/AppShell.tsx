@@ -184,11 +184,13 @@ export function AppShell() {
             <LanguageSwitcher/>
             <NotificationBell/>
           </div>
-          <div style={{width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginTop:4}}>
+          <div style={{width:'100%', display:'flex', flexWrap:'wrap', alignItems:'center', justifyContent:'space-between', gap:8, marginTop:4}}>
             <HardwareBackendBadge/>
             <MowerStatus/>
           </div>
         </header>
+
+        {showInstallBanner && <IOSInstallBanner onDismiss={dismissInstallBanner}/>}
 
         <main style={{
           flex: 1, overflow: 'auto', minHeight: 0,
@@ -197,8 +199,6 @@ export function AppShell() {
         }}>
           <AnimatedOutlet currentPath={currentPath}/>
         </main>
-
-        {showInstallBanner && <IOSInstallBanner onDismiss={dismissInstallBanner}/>}
 
         <MobileMoreSheet
           open={moreOpen}
@@ -306,8 +306,10 @@ function AnimatedOutlet({currentPath}: {currentPath: string}) {
   const outlet = useOutlet();
   // Scrolling pages must grow with their content so main's bottom padding
   // follows the final control instead of sitting behind overflowing children.
-  // Map and logs own their viewport layout and still need a definite height.
-  const fillViewport = currentPath === '/map' || currentPath === '/logs';
+  // Map needs a definite height. Logs flex to fill the viewport but may grow
+  // on short screens, keeping main's bottom clearance after the final control.
+  const fillViewport = currentPath === '/map';
+  const isLogs = currentPath === '/logs';
   return (
     <AnimatePresence mode="wait">
       <motion.div
@@ -316,7 +318,8 @@ function AnimatedOutlet({currentPath}: {currentPath: string}) {
         animate={{opacity: 1, y: 0}}
         exit={{opacity: 0, y: -6}}
         transition={{duration: 0.28, ease: [0.2, 0.7, 0.2, 1]}}
-        style={{minHeight: '100%', height: fillViewport ? '100%' : undefined}}
+        style={{minHeight: '100%', height: fillViewport ? '100%' : undefined,
+          display: isLogs ? 'flex' : undefined, flexDirection: isLogs ? 'column' : undefined}}
       >
         {outlet}
       </motion.div>

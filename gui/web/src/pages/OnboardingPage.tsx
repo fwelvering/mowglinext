@@ -974,7 +974,11 @@ const FirmwareStep: React.FC<{ onNext: () => void; autoFlash?: boolean; mowerMod
                 style={{ marginBottom: 24, textAlign: "left" }}
             />
 
-            <Space size="middle">
+            <Space
+                size="middle"
+                wrap
+                style={{display: "flex", justifyContent: "center", width: "100%"}}
+            >
                 <Button type="primary" size="large" onClick={() => setShowFlash(true)}>
                     {t("onboardingPage.flashFirmware")}
                 </Button>
