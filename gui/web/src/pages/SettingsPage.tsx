@@ -563,7 +563,7 @@ export const SettingsPage = () => {
                         position: "sticky",
                         top: 8,
                         alignSelf: "flex-start",
-                    }}>
+                    }} className="settings-preview-rail">
                         <SettingsPreview values={values} section={activeSection}/>
                     </div>
                 )}
