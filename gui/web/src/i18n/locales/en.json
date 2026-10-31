@@ -1286,6 +1286,10 @@
     "readinessCtaDrawArea": "Draw area"
   },
   "settingsPage": {
+    "leaveTitle": "Leave without saving?",
+    "leaveBody": "Your unsaved settings will be discarded. Stay on this page to save them.",
+    "discardAndLeave": "Discard and leave",
+    "keepEditing": "Keep editing",
     "ros2Restarting": "Restarting ROS2…",
     "ros2Restarted": "ROS2 restarted",
     "ros2RestartFailed": "ROS2 restart failed",

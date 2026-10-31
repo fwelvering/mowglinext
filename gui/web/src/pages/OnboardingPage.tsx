@@ -1149,8 +1149,11 @@ const OnboardingWizard: React.FC = () => {
             (currentStep >= STEP_NTRIP && currentStep <= STEP_CALIBRATION);
         if (isConfigStep) {
             setSaving(true);
-            await saveValues(localValues);
-            setSaving(false);
+            try {
+                if (!await saveValues(localValues)) return;
+            } finally {
+                setSaving(false);
+            }
         }
         // Leaving the GPS step: if any GPS/NTRIP/serial field actually
         // changed vs the snapshot taken on entry, bounce the GPS container
