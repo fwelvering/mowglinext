@@ -55,6 +55,7 @@ The other four specs are targeted regressions rather than a matrix:
 
 | Spec | Pins |
 |------|------|
+| `planning-history.spec.ts` | Exact full-day schedule starts, keyboard access to weekly runtime, and mobile More focus containment/restoration with inert background, Escape, backdrop, close and navigation. |
 | `ux-audit.spec.ts` | French desktop/phone audit regressions: STOP payload and contrast, localized search/accessibility, all settings categories, statistics, inactive schedules, wizard scroll, diagnostic provenance, and live-save failure feedback. Optional `UX_SCREENSHOT_DIR` retains screenshots outside the runner output. |
 | `log-stream.spec.ts` | 1 000 high-rate container log lines all reach the live tail; a docker RFC3339Nano stamp is shown in the timestamp column and stripped from the body. |
 | `map-console.spec.ts` | map layers mount with **no** `missing required property "source"` / `React.Fragment` console errors. |

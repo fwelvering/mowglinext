@@ -1,7 +1,7 @@
 import {observeAsync} from "../utils/async";
 import {isJsonObject} from "../utils/json";
 import {useAsyncHandler} from "../hooks/useAsyncHandler";
-import {type ReactNode, useEffect, useMemo, useState} from "react";
+import {type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState} from "react";
 import {useMatches, useNavigate, useOutlet} from "react-router-dom";
 import {AnimatePresence, motion, LayoutGroup} from "framer-motion";
 import {
@@ -530,17 +530,36 @@ function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreShe
   const navigate = useNavigate();
   const {displayMode} = useThemeMode();
 
-  // Escape closes the sheet (keyboard parity with the backdrop tap / X button).
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  // Native modal dialogs move/contain focus, make the rest of the document
+  // inert, and restore the opener when closed (including on navigation).
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open) dialog.showModal();
+    else dialog.close();
+    return () => { dialog.close(); };
+  }, [open]);
 
   return (
+    <dialog
+      ref={dialogRef}
+      aria-label={t('nav.more')}
+      onCancel={e => { e.preventDefault(); onClose(); }}
+      onKeyDown={e => {
+        if (e.key !== 'Tab') return;
+        const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }}
+      style={{position: 'fixed', inset: 0, margin: 0, padding: 0, border: 'none', width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', background: 'transparent'}}
+    >
     <AnimatePresence>
       {open && (
         <>
@@ -564,7 +583,7 @@ function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreShe
           >
             <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12}}>
               <span style={{fontSize: 13, fontWeight: 600, color: 'rgba(236, 255, 244, 0.66)'}}>{t('nav.more')}</span>
-              <button onClick={onClose} aria-label={t('nav.close')} style={{
+              <button autoFocus onClick={onClose} aria-label={t('nav.close')} style={{
                 background: 'transparent', border: 'none', cursor: 'pointer', color: 'rgba(236, 255, 244, 0.66)',
                 display: 'flex', padding: 4,
               }}>
@@ -595,6 +614,7 @@ function MobileMoreSheet({open, items, activePath, onClose, onNavigate}: MoreShe
         </>
       )}
     </AnimatePresence>
+    </dialog>
   );
 }
 
